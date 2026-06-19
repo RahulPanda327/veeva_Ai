@@ -1,0 +1,45 @@
+Active Alerts :
+The Active Alerts module uses AI to continuously monitor territory performance and proactively identify risks or opportunities that require action.
+
+1. Anomaly Detection
+The system monitors prescription trends, competitor activity, payer changes, and HCP engagement patterns. When it detects unusual changes from normal behavior, it automatically generates alerts and assigns a priority level (Critical, High, or Medium).
+
+Examples:
+Competitive messaging changes
+Sudden Rx volume decline
+HCP awareness drop
+Payer formulary updates
+
+Business value:
+Provides early warning signals before significant business impact occurs.
+Helps teams react faster to market changes.
+
+
+2. AI-Based Impact Analysis
+For each alert, AI evaluates the potential business impact and quantifies the risk.
+
+What it shows:
+Number of affected HCPs
+Territory reach
+Covered lives impacted
+Rx risk level
+Access impact
+
+Business value:
+Helps managers understand the severity and scale of an issue.
+Supports prioritization of high-impact alerts.
+
+
+3. Recommended Actions & Next Best Action
+Each alert is paired with an AI-recommended response and actionable next steps.
+
+Examples:
+Deploy approved counter-messaging to the field
+View affected HCPs
+Access support resources
+Schedule follow-up calls
+Dismiss or acknowledge alerts
+
+Business value:
+Enables immediate action directly from the platform.
+Reduces response time and improves field effectiveness.

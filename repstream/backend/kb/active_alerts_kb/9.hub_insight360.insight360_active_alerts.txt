@@ -1,0 +1,77 @@
+Table Name: hub_insight360.insight360_active_alerts
+
+Purpose:
+This table stores active business alerts generated from analytics, anomaly detection,
+and machine learning models. These alerts help business, sales, and field teams
+identify risks, market shifts, prescribing changes, engagement gaps, and recommended actions.
+
+--------------------------------------------------------------------------------------------------------------
+Column Name              : Alert_Id
+Description              : Unique identifier assigned to each alert.
+Purpose / Business Use   : Used to uniquely track and reference alerts across systems.
+Example                  : AL-001
+--------------------------------------------------------------------------------------------------------------
+
+Column Name              : Alert_Severity
+Description              : Indicates the urgency or business impact level of the alert.
+Purpose / Business Use   : Helps teams prioritize actions based on business criticality.
+Possible Values          : CRITICAL / HIGH / MEDIUM / LOW
+Example                  : CRITICAL
+--------------------------------------------------------------------------------------------------------------
+
+Column Name              : Alert_Category
+Description              : Classification of how the alert was generated.
+Purpose / Business Use   : Distinguishes between anomaly-based detection and predictive analytics.
+Possible Values          : ANOMALY DETECTION / ML TREND / ANOMALY
+Example                  : ANOMALY DETECTION
+--------------------------------------------------------------------------------------------------------------
+
+Column Name              : Alert_Title
+Description              : Short business summary describing the identified event or issue.
+Purpose / Business Use   : Provides immediate understanding of what requires attention.
+Example                  : Competitive script shift in cardiology segment
+--------------------------------------------------------------------------------------------------------------
+
+Column Name              : Alert_Timestamp
+Description              : Date and time when the alert was generated.
+Purpose / Business Use   : Helps teams monitor trends and take timely actions.
+Example                  : 2026-04-28 08:15
+--------------------------------------------------------------------------------------------------------------
+
+Column Name              : Territory_Id
+Description              : Unique identifier for the affected sales or business territory.
+Purpose / Business Use   : Enables territory-level monitoring and action planning.
+
+--------------------------------------------------------------------------------------------------------------
+
+Column Name              : Territory_Name
+Description              : Name of the impacted territory or geographic region.
+Purpose / Business Use   : Helps field teams identify where business intervention is needed.
+
+--------------------------------------------------------------------------------------------------------------
+
+Column Name              : Impacted_HCP_Count
+Description              : Number of Healthcare Professionals impacted by the alert.
+Purpose / Business Use   : Indicates scale of influence within the territory.
+
+--------------------------------------------------------------------------------------------------------------
+
+Column Name              : Territory_Impact
+Description              : Indicates how many territories are affected.
+Purpose / Business Use   : Measures overall business spread and operational impact.
+
+--------------------------------------------------------------------------------------------------------------
+
+Column Name              : Priority_Level
+Description              : Recommended execution priority for business action.
+Purpose / Business Use   : Guides field teams on action urgency.
+Possible Values          : High / Medium / Low
+
+--------------------------------------------------------------------------------------------------------------
+
+Column Name              : Recommended_Action
+Description              : Suggested business action generated from analytics insights.
+Purpose / Business Use   : Helps teams respond quickly with targeted engagement,
+                           market access strategy, or HCP outreach.
+
+--------------------------------------------------------------------------------------------------------------
