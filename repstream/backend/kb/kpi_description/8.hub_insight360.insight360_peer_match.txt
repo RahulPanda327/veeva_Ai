@@ -1,0 +1,105 @@
+Table: hub_insight360.insight360_peer_match
+Purpose
+This table stores peer matching insights for Healthcare Professionals (HCPs).
+It identifies physicians/providers and recommends similar peer physicians (Peer Connectors) based on specialty, location, patient patterns, and engagement insights. It also generates personalized warm approach messages that sales/field teams can use for outreach.
+
+
+--------------------------------------------------------------------------------------------------------------
+Column Name              : HCP_Durable_Id
+Description              : Unique identifier for the Healthcare Professional (HCP).
+Purpose / Business Use   : Used as the primary key to uniquely identify each doctor/provider across systems.
+Example                  : 3360909
+--------------------------------------------------------------------------------------------------------------
+
+Column Name              : HCP_Full_Name
+Description              : Full name of the target HCP.
+Purpose / Business Use   : Identifies the physician receiving the peer recommendation.
+Example                  : Elizabeth,Hammerstrand
+--------------------------------------------------------------------------------------------------------------
+
+Column Name              : Specialty
+Description              : Medical specialization of the HCP.
+Purpose / Business Use   : Helps identify and match physicians with similar clinical practice areas.
+Example                  : Hematology/Oncology
+--------------------------------------------------------------------------------------------------------------
+
+Column Name              : City_State
+Description              : Practice location of the HCP.
+Purpose / Business Use   : Enables geographic-based peer matching and regional engagement analysis.
+Example                  : Needham, MA
+--------------------------------------------------------------------------------------------------------------
+
+Column Name              : Peer_Match_Pct
+Description              : Similarity score between the target HCP and the matched peer.
+Purpose / Business Use   : Indicates how closely the physician profile matches another physician.
+                           Higher percentage indicates a stronger peer relationship.
+Example                  : 63.0%
+--------------------------------------------------------------------------------------------------------------
+
+Column Name              : Peer_Connector_HCP_Id
+Description              : Unique identifier of the matched peer connector physician.
+Purpose / Business Use   : Creates a relationship between the target HCP and the recommended peer.
+Example                  : 1002
+--------------------------------------------------------------------------------------------------------------
+
+Column Name              : Peer_Connector_Name
+Description              : Name of the recommended peer connector physician.
+Purpose / Business Use   : Allows business users and engagement teams to identify which peer to leverage.
+Example                  : Dr. Michael Chen
+--------------------------------------------------------------------------------------------------------------
+
+Column Name              : Warm_Approach_Text
+Description              : Auto-generated engagement message based on peer insights.
+Purpose / Business Use   : Provides contextual outreach messaging for sales, field teams,
+                           and physician engagement conversations.
+Example                  : Your colleague Dr. Michael Chen recently switched patients...
+--------------------------------------------------------------------------------------------------------------
+
+
+
+Relationship Flow :
+Target HCP
+   ↓
+Identify Similar Physicians
+   ↓
+Calculate Match Score (Peer_Match_Pct)
+   ↓
+Assign Peer Connector
+   ↓
+Generate Warm Outreach Message
+
+
+
+Example from your data :
+HCP: Elizabeth Hammerstrand
+Specialty: Hematology/Oncology
+Location: Needham, MA
+
+Matched Peer:
+→ Dr. Michael Chen
+→ Match Score: 63%
+
+Generated Insight:
+Use Dr. Michael Chen's experience as a conversation starter.
+
+
+
+Typical Use Cases:
+Physician engagement
+Sales representative recommendations
+Peer influence analysis
+Targeted outreach campaigns
+Personalized field messaging
+HCP relationship intelligence
+
+--------------------------------------------------------------------------------------------------------------
+ENGINEERING NOTES (verified via sql_query_kpi_7to19.sql KPI 7):
+
+- Peer_Match_Pct is stored as a string with % suffix e.g. "63.0%"
+  Parse to float:  float(row.Peer_Match_Pct.replace('%', ''))
+
+- This table has NO territory_id column.
+  Territory is derived by joining to vw_account_territory_zenpep_reporting on HCP_Durable_Id.
+
+- HCP_Durable_Id is the primary key (one row per HCP candidate).
+--------------------------------------------------------------------------------------------------------------

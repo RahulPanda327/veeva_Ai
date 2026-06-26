@@ -1,0 +1,6 @@
+Payer Access Monitoring :
+1. Payer Intelligence Tracking
+The system continuously monitors payer formularies and access rules across major insurance providers. It detects changes such as tier movements or prior authorization updates in real time and alerts users when a change could impact product access.
+
+2. AI-Based Impact Analysis
+For every payer change, AI calculates the business impact by showing affected HCPs, covered lives at risk, and the expected access or copay impact. It also provides a recommended action plan so field teams can respond quickly to formulary changes.

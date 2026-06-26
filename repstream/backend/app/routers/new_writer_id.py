@@ -7,8 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.schemas.new_writer import ApproachBriefResponse, NewWriterCandidate
-from app.services.new_writer_id.approach_brief import build_approach_brief_response, generate_approach_brief
+from app.schemas.new_writer import ApproachBriefResponse, NewWriterCandidate, NewWriterListResponse
+from app.services.new_writer_id.approach_brief import (
+    build_approach_brief_response,
+    generate_approach_brief,
+    generate_warm_approach_for_list,
+)
 from app.services.new_writer_id.icd10_matching import enrich_with_icd10
 from app.services.new_writer_id.match_scoring import enrich_with_peer_match
 from app.services.new_writer_id.non_writer_detection import detect_non_writers, enrich_with_hcp_dimensions
@@ -22,29 +26,47 @@ router = APIRouter(prefix="/new-writers", tags=["New Writer Identification"])
 _CACHE_TTL = 3600
 
 
+def _build_badges(c: dict) -> List[str]:
+    badges = ["ML_PATTERN_MATCHING"]
+    if c.get("ai_icd10_match_count", 0) > 0:
+        badges.append("AI_MATCHED")
+    if c.get("ai_warm_approach_text"):
+        badges.append("AI_GENERATED")
+    return badges
+
+
 def _get_candidates(db: Session, territory_id: str) -> List[dict]:
-    cache_key = territory_cache_key("new_writers:candidates_v2", territory_id)
+    cache_key = territory_cache_key("new_writers:candidates_v3", territory_id)
     cached = cache_get(cache_key)
     if cached:
         return cached
 
     (yr1, q1), (yr4, q4) = get_current_and_prior_quarter(date.today())
-    raw = detect_non_writers(db, territory_id, yr1, q1, yr4, q4)
+
+    # Detect + enrich (raw SQL join or sample fallback)
+    raw      = detect_non_writers(db, territory_id, yr1, q1, yr4, q4)
     enriched = enrich_with_hcp_dimensions(db, raw, territory_id)
     enriched = enrich_with_icd10(enriched)
     enriched = enrich_with_peer_match(db, enriched, territory_id)
 
-    # Rename to ai_ keys
+    # Rename peer-match keys to ai_ prefix
     for c in enriched:
-        c["ai_peer_match_score"] = c.pop("peer_match_pct", 0.0)
-        c["ai_peer_name"] = c.pop("peer_name", None)
-        c["ai_peer_hcp_id"] = c.pop("peer_hcp_id", None)
-        c["ai_icd10_matched_codes"] = c.pop("matched_icd10_codes", [])
-        c["ai_icd10_match_count"] = len(c["ai_icd10_matched_codes"])
-        c["ai_non_writer_flag"] = True
-        c["ai_approach_brief"] = None
-        c["ai_approach_highlight"] = None
-        c.setdefault("ai_peer_rationale", None)
+        c["ai_peer_match_score"]    = c.pop("peer_match_pct", c.get("ai_peer_match_score", 0.0))
+        c["ai_peer_name"]           = c.pop("peer_name",     c.get("ai_peer_name"))
+        c["ai_peer_hcp_id"]         = c.pop("peer_hcp_id",   c.get("ai_peer_hcp_id"))
+        c["ai_peer_rationale"]      = c.pop("match_rationale", c.get("ai_peer_rationale"))
+        c["ai_icd10_matched_codes"] = c.pop("matched_icd10_codes", c.get("ai_icd10_matched_codes", []))
+        c["ai_icd10_match_count"]   = len(c["ai_icd10_matched_codes"])
+        c["ai_non_writer_flag"]     = True
+        c["total_in_class_rx"]      = float(c.get("in_class_rx_q1", 0) or 0)
+
+    # Technique 4: rule-based warm approach for list view
+    generate_warm_approach_for_list(enriched)
+
+    # Build badges
+    for c in enriched:
+        c["analysis_badges"] = _build_badges(c)
+        c["ai_is_identified"] = True
 
     cache_set(cache_key, enriched, ttl=_CACHE_TTL)
     return enriched
@@ -55,7 +77,7 @@ async def get_new_writer_candidates(
     rep: RepIdentity = Depends(get_current_rep),
     db: Session = Depends(get_db),
 ):
-    """Non-writer candidates with AI peer match score, ICD-10 matches, and Rx breakdown."""
+    """Non-writer candidates with ML peer match, ICD-10 matching, and AI warm approach."""
     return [NewWriterCandidate(**c) for c in _get_candidates(db, rep.territory_id)]
 
 
@@ -65,22 +87,22 @@ async def generate_warm_approach_brief(
     rep: RepIdentity = Depends(get_current_rep),
     db: Session = Depends(get_db),
 ):
-    """Generate a GPT-4o warm approach brief. Returns ai_approach_brief + ai_approach_highlight."""
+    """On-demand: GPT-4o warm approach brief for a single new writer candidate."""
     candidates = _get_candidates(db, rep.territory_id)
-    # Remap ai_ keys back for the service layer
     hcp = next((c for c in candidates if c["hcp_id"] == hcp_id), None)
     if hcp is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Candidate {hcp_id} not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Candidate {hcp_id} not found",
+        )
 
     service_hcp = {
         **hcp,
-        "peer_name": hcp.get("ai_peer_name"),
+        "peer_name":           hcp.get("ai_peer_name"),
         "matched_icd10_codes": hcp.get("ai_icd10_matched_codes", []),
-        "competitor_brand": hcp.get("competitor_brand", ""),
-        "competitor_volume": hcp.get("competitor_volume", 0.0),
     }
     brief_text = generate_approach_brief(service_hcp)
-    result = build_approach_brief_response(service_hcp, brief_text)
+    result     = build_approach_brief_response(service_hcp, brief_text)
 
     return ApproachBriefResponse(
         hcp_id=result["hcp_id"],
@@ -93,7 +115,6 @@ async def generate_warm_approach_brief(
 
 
 def _extract_highlight(brief_text: str) -> str:
-    """Pull a 5-7 word emphasise phrase from the brief."""
     sentences = brief_text.split(".")
     if len(sentences) >= 2:
         words = sentences[1].strip().split()

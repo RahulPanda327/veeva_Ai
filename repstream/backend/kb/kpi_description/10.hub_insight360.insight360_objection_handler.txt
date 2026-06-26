@@ -1,0 +1,91 @@
+Table Name: hub_insight360.insight360_objection_handler
+
+Purpose:
+This table stores NLP-detected objections from field call transcripts. Each row represents a
+detected objection event, including the raw objection text, frequency label, historical conversion
+rate, and the pre-approved MLR response the rep should use.
+
+AUTHORITATIVE COLUMN NAMES (verified via sql_query_kpi_7to19.sql KPI 9-11):
+
+---
+
+Column Name              : Call_Transcript_Id
+Description              : Primary key — references the source call transcript where this objection was detected.
+Purpose / Business Use   : Links each objection back to the specific call interaction.
+
+---
+
+Column Name              : HCP_Durable_Id
+Description              : Unique identifier for the Healthcare Professional who raised the objection.
+Purpose / Business Use   : Links the objection to the prescriber profile.
+
+---
+
+Column Name              : HCP_Full_Name
+Description              : Full name of the HCP.
+Purpose / Business Use   : Display label in the Objection Handler UI.
+
+---
+
+Column Name              : Call_Date
+Description              : Date of the call where the objection was captured.
+Purpose / Business Use   : Used for trend and detection period analysis.
+
+---
+
+Column Name              : Objection_Category
+Description              : NLP classification of the objection type (e.g., "Side Effect Profile", "Dosing Complexity", "Insurance Coverage").
+Purpose / Business Use   : Groups similar objections for frequency analysis and UI card display.
+
+---
+
+Column Name              : Objection_Frequency_Label
+Description              : Frequency tier — HIGH / MEDIUM / LOW — based on how often this category occurs.
+Purpose / Business Use   : Drives badge display and priority sorting in the UI.
+
+---
+
+Column Name              : Objection_Text
+Description              : Verbatim or paraphrased objection statement from the HCP.
+Purpose / Business Use   : Displayed as the objection card quote in the RepStream UI.
+
+---
+
+Column Name              : Transcript_Summary
+Description              : AI-generated summary of the full call transcript context.
+Purpose / Business Use   : Provides rep with additional context when reviewing objection history.
+
+---
+
+Column Name              : Call_Count_Mentions
+Description              : Number of times this objection category has been detected (stored as string e.g. "12").
+Purpose / Business Use   : Frequency metric used for trend cards and sorting.
+
+---
+
+Column Name              : Detection_Period
+Description              : Date range string covering the detection window (e.g., "Mar 15 - Apr 22").
+Purpose / Business Use   : Displayed on the objection card as the analysis period.
+
+---
+
+Column Name              : Historical_Conversion_Rate_Pct
+Description              : Historical success rate of the MLR response for this objection category (stored as "67%").
+Purpose / Business Use   : AI_OPTIMIZED badge threshold and conversion score calculation.
+
+---
+
+Column Name              : MLR_Approved_Response
+Description              : Pre-approved MLR talking point the rep should use to address this objection.
+Purpose / Business Use   : Core value delivery of the Objection Handler module.
+
+---
+
+Column Name              : MLR_SKU_Code
+Description              : SKU code for the supporting leave-behind material associated with this response.
+Purpose / Business Use   : Links rep to the physical or digital supporting material.
+
+---
+
+NOTE: Territory is NOT stored directly in this table. Join to insight360_call_transcripts
+via Call_Transcript_Id to get Territory_Durable_Id (see KPI 10 in sql_query_kpi_7to19.sql).

@@ -1,0 +1,41 @@
+HCP Awareness Monitoring :
+The HCP Awareness module tracks how engaged and informed healthcare providers (HCPs) are about our product and identifies early signs of declining awareness before it impacts prescribing behavior.
+
+1. Average Awareness Score Trend :
+The system measures the average awareness score across all HCPs in the territory and tracks it over time.
+
+What it shows:
+Territory-wide awareness trend (e.g., Jan → Feb → Mar → Apr)
+Color indicators (Green → Amber → Red) showing declining engagement levels
+
+Business value:
+Provides an early warning when overall HCP awareness is dropping.
+Helps teams identify when additional education or engagement campaigns may be needed.
+
+
+2. NLP Analysis of At-Risk HCPs :
+AI identifies individual HCPs whose awareness scores have declined significantly and analyzes the likely reason.
+
+Examples of root causes:
+Increased consumption of competitor content
+Reduced interaction with field representatives
+Changes in prescribing behavior
+Lower engagement with educational materials
+
+What it shows:
+Awareness score and decline percentage
+Prescribing patterns
+Relevant ICD-10 focus areas
+Activity insights explaining the decline
+
+Business value:
+Helps reps understand why awareness is dropping.
+Enables targeted and personalized re-engagement efforts.
+
+
+3. Recommended Action
+The system provides immediate next steps such as Schedule Call for HCPs showing declining awareness.
+
+Business value:
+Allows reps to proactively reconnect with at-risk physicians.
+Helps prevent future prescribing drift and loss of market share.

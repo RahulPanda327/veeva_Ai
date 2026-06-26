@@ -1,0 +1,90 @@
+New Writer ID :
+The New Writer ID module helps sales representatives identify healthcare providers (HCPs) who are potential new prescribers of our brand and provides guidance on how to engage them effectively.
+
+1. New Writer Detection
+The system identifies HCPs who are actively prescribing competitor or generic products within the same therapeutic class but are not yet prescribing our brand.
+
+What it shows:
+Physician name and specialty
+Organization/practice
+First New Prescription (NBRx) date
+
+Business value:
+Finds high-potential conversion opportunities early.
+Helps sales reps focus on physicians who are already treating relevant patients and writing prescriptions in the category.
+
+2. Peer Network Matching
+The platform analyzes professional relationships and peer networks to determine how closely a new writer is connected to existing prescribers of our brand.
+
+What it shows:
+Peer Match % score (e.g., 87%, 72%)
+
+Business value:
+Higher percentages indicate stronger connections to current brand writers.
+Helps prioritize physicians who may be more receptive to peer-driven influence and product adoption.
+
+
+3. AI-Generated Warm Approach
+The system generates a personalized recommendation explaining why the physician is a good target and how to approach them.
+
+What it includes:
+Relevant peer connections
+Suggested conversation entry points
+Potential conversion opportunity indicators
+
+Example:
+Connected to Dr. Davidson and currently prescribing competitor products in the same class.
+
+Business value:
+Gives sales reps a tailored engagement strategy instead of a generic sales approach.
+Increases the likelihood of meaningful conversations.
+
+
+4. ICD-10 Diagnosis Matching
+The system identifies diagnosis codes commonly associated with the physician's patients.
+
+What it shows:
+Relevant ICD-10 codes (e.g., Type 2 Diabetes, Hyperlipidemia)
+
+Business value:
+Confirms that the physician treats patients appropriate for the brand.
+Ensures outreach is clinically relevant.
+
+
+5. Competitive Prescribing Insights
+Displays the physician's top prescriptions within the therapeutic class.
+
+What it shows:
+Competitor brands
+Generic alternatives
+Prescription volumes
+
+Business value:
+Reveals which products the physician currently prefers.
+Helps sales reps understand where conversion opportunities exist.
+
+
+6. Generate Approach Brief
+Provides a detailed AI-generated call preparation document.
+
+What it includes:
+Physician profile
+Prescribing behavior
+Peer network insights
+Suggested talking points
+Recommended engagement strategy
+
+Business value:
+Reduces preparation time.
+Helps sales reps conduct more informed and targeted interactions.
+
+
+Key Insight :
+This page answers five critical sales questions:
+| Question                         | Answered By                       |
+| -------------------------------- | --------------------------------- |
+| Who should I target?             | New Writer Detection              |
+| Are they relevant to my brand?   | ICD-10 Match                      |
+| What are they prescribing today? | Competitive Prescribing Analysis  |
+| How likely are they to convert?  | Peer Match %                      |
+| How should I approach them?      | AI Warm Approach & Approach Brief |

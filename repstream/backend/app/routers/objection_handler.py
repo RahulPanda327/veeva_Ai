@@ -10,13 +10,15 @@ from app.schemas.objection import (
     AddToCallPrepRequest,
     AddToCallPrepResponse,
     ObjectionItem,
+    ObjectionListResponse,
     ObjectionResponse,
 )
 from app.services.objection_handler.mlr_response_engine import (
+    enrich_objection_list,
     get_best_mlr_response,
     load_all_objections,
+    sort_objections,
 )
-from app.services.objection_handler.objection_classifier import assign_frequency_label
 from app.utils.auth import RepIdentity, get_current_rep
 from app.utils.cache import cache_get, cache_set, territory_cache_key
 
@@ -27,29 +29,22 @@ _CACHE_TTL = 3600
 
 
 def _get_objection_list(db: Session, territory_id: str, period: Optional[str] = None) -> List[dict]:
-    cache_key = territory_cache_key(f"objections:list:{period or 'all'}", territory_id)
+    cache_key = territory_cache_key(f"objections:list_v2:{period or 'all'}", territory_id)
     cached = cache_get(cache_key)
     if cached:
         return cached
 
     rows = load_all_objections(db, territory_id, period)
-    result = [
-        {
-            "objection_id": r.objection_id,
-            "objection_type": r.objection_type,
-            "objection_text": r.objection_text,
-            "period": r.period or "",
-            "territory_id": r.territory_id,
-            # AI keys
-            "ai_frequency_label": assign_frequency_label(r.call_count or 0),
-            "ai_call_count": r.call_count or 0,
-            "ai_success_rate": r.success_rate or 0.0,
-            "ai_conversion_score": round((r.success_rate or 0.0) * 100, 1),
-        }
-        for r in rows
-    ]
-    cache_set(cache_key, result, ttl=_CACHE_TTL)
-    return result
+    rows = enrich_objection_list(rows)
+    rows = sort_objections(rows)
+
+    # Build response highlight from response text
+    for obj in rows:
+        resp = obj.get("ai_mlr_response", "")
+        obj["ai_response_highlight"] = _extract_response_highlight(resp)
+
+    cache_set(cache_key, rows, ttl=_CACHE_TTL)
+    return rows
 
 
 @router.get("/list", response_model=List[ObjectionItem])
@@ -58,8 +53,9 @@ async def list_objections(
     rep: RepIdentity = Depends(get_current_rep),
     db: Session = Depends(get_db),
 ):
-    """Ranked objections with AI frequency label and success rate."""
-    return [ObjectionItem(**o) for o in _get_objection_list(db, rep.territory_id, period)]
+    """Ranked objections with NLP analysis, frequency labels, and AI-optimized responses."""
+    rows = _get_objection_list(db, rep.territory_id, period)
+    return [ObjectionItem(**o) for o in rows]
 
 
 @router.get("/{objection_id}/response", response_model=ObjectionResponse)
@@ -68,12 +64,36 @@ async def get_objection_response(
     rep: RepIdentity = Depends(get_current_rep),
     db: Session = Depends(get_db),
 ):
-    """MLR-approved response with AI keys: ai_mlr_response, ai_sku, ai_success_rate."""
+    """MLR-approved response with AI enrichment for a single objection."""
+    # Try to get from the cached list first
+    rows = _get_objection_list(db, rep.territory_id)
+    row = next((r for r in rows if r["objection_id"] == objection_id), None)
+
+    if row:
+        return ObjectionResponse(
+            objection_id=row["objection_id"],
+            objection_type=row["objection_type"],
+            objection_text=row["objection_text"],
+            hcp_segment=row.get("hcp_segment"),
+            ai_mlr_response=row.get("ai_mlr_response", ""),
+            ai_response_source=row.get("response_source"),
+            ai_sku=row.get("ai_sku"),
+            ai_success_rate=float(row.get("ai_success_rate", 0)),
+            ai_conversion_score=row.get("ai_conversion_score", 0.0),
+            ai_date_range=row.get("ai_date_range"),
+            ai_supporting_materials=row.get("ai_supporting_materials"),
+            ai_response_highlight=row.get("ai_response_highlight"),
+            ai_is_optimized=row.get("ai_is_optimized", True),
+            analysis_badges=row.get("analysis_badges", []),
+        )
+
+    # Fallback: direct DB lookup
     result = get_best_mlr_response(db, objection_id)
     if result is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No MLR response for {objection_id}")
-
-    # Rename to ai_ keys
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No MLR response for {objection_id}",
+        )
     return ObjectionResponse(
         objection_id=result["objection_id"],
         objection_type=result["objection_type"],
@@ -82,9 +102,12 @@ async def get_objection_response(
         ai_mlr_response=result["recommended_response"],
         ai_response_source=result.get("response_source"),
         ai_sku=result.get("sku"),
-        ai_success_rate=result.get("success_rate", 0.0),
-        ai_conversion_score=round((result.get("success_rate", 0.0)) * 100, 1),
+        ai_success_rate=float(result.get("success_rate", 0)),
+        ai_conversion_score=round(float(result.get("success_rate", 0)) * 100, 1),
+        ai_supporting_materials=result.get("ai_supporting_materials"),
         ai_response_highlight=_extract_response_highlight(result["recommended_response"]),
+        ai_is_optimized=True,
+        analysis_badges=["DETECTED_BY_AI", "NLP_ANALYSIS", "AI_OPTIMIZED"],
     )
 
 
@@ -95,7 +118,7 @@ async def add_to_call_prep(
     rep: RepIdentity = Depends(get_current_rep),
     db: Session = Depends(get_db),  # noqa: ARG001
 ):
-    """Flag an objection for the rep's next call prep (stored in Redis)."""
+    """Flag an objection for the rep's next call prep."""
     call_prep_key = f"call_prep:{body.rep_id}"
     cached: list = cache_get(call_prep_key) or []
     if objection_id not in cached:
@@ -110,7 +133,6 @@ async def add_to_call_prep(
 
 
 def _extract_response_highlight(response_text: str) -> Optional[str]:
-    """Extract a 4-8 word highlight phrase from the first sentence."""
     if not response_text:
         return None
     sentences = response_text.split(".")

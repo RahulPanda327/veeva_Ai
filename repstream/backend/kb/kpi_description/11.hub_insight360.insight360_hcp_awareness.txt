@@ -1,0 +1,78 @@
+Table Name: hub_insight360.insight360_hcp_awareness :
+
+Purpose:
+This table stores Healthcare Professional (HCP) awareness and engagement trends over time. It tracks awareness score movement across multiple periods, identifies behavioral changes, determines engagement status, and provides insight into factors influencing HCP awareness levels.
+
+---
+
+Column Name              : HCP_Durable_Id
+Description              : Unique identifier for the Healthcare Professional (HCP).
+Purpose / Business Use   : Used to uniquely identify and track awareness performance for each physician.
+
+---
+
+Column Name              : HCP_Full_Name
+Description              : Full name of the Healthcare Professional.
+Purpose / Business Use   : Identifies the physician whose awareness trend is being measured.
+
+---
+
+Column Name              : Specialty
+Description              : Medical specialization of the HCP.
+Purpose / Business Use   : Supports segmentation and comparison of awareness trends across specialties.
+
+---
+
+Column Name              : City_State
+Description              : Practice location of the HCP.
+Purpose / Business Use   : Enables geographic analysis of awareness and engagement patterns.
+
+---
+
+Column Name              : Awareness_Score_Period_1
+Description              : Awareness score captured for the earliest measurement period.
+Purpose / Business Use   : Serves as the baseline awareness value for trend calculations.
+
+---
+
+Column Name              : Awareness_Score_Period_2
+Description              : Awareness score captured for the second measurement period.
+Purpose / Business Use   : Measures intermediate movement in awareness level.
+
+---
+
+Column Name              : Awareness_Score_Period_3
+Description              : Awareness score captured for the third measurement period.
+Purpose / Business Use   : Tracks continued awareness progression or decline.
+
+---
+
+Column Name              : Current_Awareness_Score
+Description              : Most recent awareness score for the HCP.
+Purpose / Business Use   : Represents current engagement and awareness status.
+
+---
+
+Column Name              : Awareness_Change_Pct
+Description              : Percentage increase or decrease in awareness across periods.
+Purpose / Business Use   : Quantifies overall awareness movement and trend direction.
+
+---
+
+Column Name              : Awareness_Status
+Description              : Current awareness trend classification.
+Purpose / Business Use   : Categorizes HCP engagement behavior for business action planning.
+
+---
+
+Column Name              : Awareness_Driver
+Description              : Identified factor contributing to awareness movement.
+Purpose / Business Use   : Explains the likely business or market reason behind awareness changes.
+
+---
+
+Column Name              : Action_Priority
+Description              : Priority assigned for business follow-up.
+Purpose / Business Use   : Helps field teams prioritize engagement and intervention activities.
+
+---

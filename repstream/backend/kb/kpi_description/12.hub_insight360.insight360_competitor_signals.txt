@@ -1,0 +1,72 @@
+Table Name: hub_insight360.insight360_competitor_signals
+
+Purpose:
+This table stores competitor intelligence signals generated through AI, machine learning, and anomaly detection models. It helps business and field teams identify competitor activities, measure market impact, and recommend actions to protect or improve market performance.
+
+---
+
+Column Name              : Signal_Id
+Description              : Unique identifier assigned to each competitor signal.
+Purpose / Business Use   : Used to track and manage competitor-related events across territories.
+
+---
+
+Column Name              : Territory_Id
+Description              : Unique identifier of the impacted sales territory.
+Purpose / Business Use   : Enables territory-level competitor monitoring and response planning.
+
+---
+
+Column Name              : Territory_Name
+Description              : Name of the affected geographic territory.
+Purpose / Business Use   : Helps identify where competitor activity is occurring.
+
+---
+
+Column Name              : Region
+Description              : Business region associated with the territory.
+Purpose / Business Use   : Supports regional analysis and escalation planning.
+
+---
+
+Column Name              : Signal_Type
+Description              : Method used to identify the competitor signal.
+Purpose / Business Use   : Indicates whether the signal was generated using AI, machine learning, or anomaly analysis.
+
+---
+
+Column Name              : Competitor_Brand
+Description              : Name of the competitor product or brand associated with the signal.
+Purpose / Business Use   : Identifies which competitor is influencing market behavior.
+
+---
+
+Column Name              : Signal_Description
+Description              : Detailed description of the detected competitor activity or market movement.
+Purpose / Business Use   : Explains what event occurred and provides business context.
+
+---
+
+Column Name              : Business_Impact_Pct
+Description              : Estimated percentage impact on business performance.
+Purpose / Business Use   : Quantifies the effect of competitor activity on engagement, awareness, or prescribing trends.
+
+---
+
+Column Name              : Competitor_Growth_Pct
+Description              : Measured growth or increase associated with competitor activity.
+Purpose / Business Use   : Indicates the intensity and momentum of competitor movement.
+
+---
+
+Column Name              : Recommended_Action
+Description              : Suggested response strategy generated from business insights.
+Purpose / Business Use   : Guides field teams with actions to reduce competitive impact and improve engagement.
+
+---
+
+Column Name              : Detection_Date
+Description              : Date when the competitor signal was identified.
+Purpose / Business Use   : Supports monitoring, reporting, and trend analysis over time.
+
+---

@@ -20,6 +20,7 @@ def _build_connection_url() -> URL:
             "driver": "ODBC Driver 17 for SQL Server",
             "Encrypt": "yes",
             "TrustServerCertificate": "no",
+            "autocommit": "yes",  # Azure Synapse serverless doesn't support explicit rollback
         },
     )
 
@@ -30,6 +31,7 @@ engine = create_engine(
     pool_size=5,
     max_overflow=10,
     echo=False,
+    isolation_level="AUTOCOMMIT",  # Azure Synapse serverless doesn't support explicit transactions
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

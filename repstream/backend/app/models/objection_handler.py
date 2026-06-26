@@ -1,46 +1,43 @@
-"""SQLAlchemy models for the Objection Handler module (all read-only)."""
-from sqlalchemy import Boolean, Column, Date, DateTime, Float, Integer, String, Text, func
+"""SQLAlchemy models for the Objection Handler module (all read-only).
+
+Column names verified against live Azure Synapse DB via sql_query_kpi_7to19.sql (KPI 8-11).
+"""
+from sqlalchemy import Column, String, Text
 from app.database import Base
 from app.config import settings
 
 
 class ObjectionHandler(Base):
-    """Maps to insight360_objection_handler (enriched table)."""
+    """Maps to insight360_objection_handler (KPI 9-11)."""
 
     __tablename__ = "insight360_objection_handler"
     __table_args__ = {"schema": settings.HUB_SCHEMA, "extend_existing": True}
 
-    objection_id = Column(String(80), primary_key=True)
-    objection_type = Column(String(100), index=True)
-    objection_text = Column(Text)
-    hcp_segment = Column(String(50))
-    recommended_response = Column(Text)
-    response_source = Column(String(100))
-    sku = Column(String(100))
-    success_rate = Column(Float, default=0.0)
-    call_count = Column(Integer, default=0)
-    territory_id = Column(String(50), index=True)
-    period = Column(String(20))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    transcript_id       = Column("Call_Transcript_Id",              String(80),  primary_key=True)
+    hcp_id              = Column("HCP_Durable_Id",                  String(50),  index=True)
+    hcp_full_name       = Column("HCP_Full_Name",                   String(200))
+    call_date           = Column("Call_Date",                       String(30))
+    objection_category  = Column("Objection_Category",              String(100), index=True)
+    frequency_label     = Column("Objection_Frequency_Label",       String(20))   # HIGH / MEDIUM / LOW
+    objection_text      = Column("Objection_Text",                  Text)
+    transcript_summary  = Column("Transcript_Summary",              Text)
+    call_count_mentions = Column("Call_Count_Mentions",             String(10))   # stored as string e.g. "12"
+    detection_period    = Column("Detection_Period",                String(50))   # "Mar 15 - Apr 22"
+    conversion_rate_pct = Column("Historical_Conversion_Rate_Pct", String(20))   # "67%"
+    mlr_response        = Column("MLR_Approved_Response",           Text)
+    mlr_sku_code        = Column("MLR_SKU_Code",                    String(100))
 
 
 class CallTranscript(Base):
-    """Maps to insight360_call_transcripts (enriched table)."""
+    """Maps to insight360_call_transcripts (KPI 8)."""
 
     __tablename__ = "insight360_call_transcripts"
     __table_args__ = {"schema": settings.HUB_SCHEMA, "extend_existing": True}
 
-    transcript_id = Column(String(80), primary_key=True)
-    call_id = Column(String(80), index=True)
-    hcp_id = Column(String(50), index=True)
-    rep_id = Column(String(50), index=True)
-    territory_id = Column(String(50), index=True)
-    call_date = Column(Date)
-    transcript_text = Column(Text)
-    has_objection = Column(Boolean, default=False)
-    objection_types = Column(Text)
-    objection_resolved = Column(Boolean, default=False)
-    rx_within_30_days = Column(Boolean, default=False)
-    sentiment_score = Column(Float)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    call_id          = Column("Src_Call_Id",          String(80),  primary_key=True)
+    hcp_id           = Column("HCP_Durable_Id",       String(50),  index=True)
+    territory_id     = Column("Territory_Durable_Id", String(50),  index=True)
+    call_date        = Column("Call_Date",            String(30))
+    transcript_tone  = Column("Transcript_Tone",      String(30))   # POSITIVE / MIXED / OBJECTION
+    product_detailed = Column("Product_Detailed",     String(50))   # ZENPEP / VOWST
+    call_channel     = Column("Call_Channel",         String(20))   # F2F / VIRTUAL

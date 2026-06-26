@@ -1,0 +1,90 @@
+Table Name: hub_insight360.insight360_payer_access
+
+Purpose:
+This table stores payer access and formulary intelligence data. It tracks payer coverage status, formulary changes, authorization requirements, patient impact, and recommended business actions to support market access and field engagement strategies.
+
+---
+
+Column Name              : Payer_Id
+Description              : Unique identifier assigned to each payer or health plan.
+Purpose / Business Use   : Used to track payer records and manage access-related analysis.
+
+---
+
+Column Name              : Plan_Name
+Description              : Name of the insurance plan or payer program.
+Purpose / Business Use   : Identifies the specific health plan being evaluated.
+
+---
+
+Column Name              : Parent_Organization
+Description              : Parent company or organization that manages the payer plan.
+Purpose / Business Use   : Supports consolidated reporting and strategic planning across payer groups.
+
+---
+
+Column Name              : Market_Segment
+Description              : Insurance market classification for the plan.
+Purpose / Business Use   : Helps segment access strategies by payer type.
+
+---
+
+Column Name              : Current_Formulary_Status
+Description              : Current formulary tier or coverage position.
+Purpose / Business Use   : Indicates present market access and prescribing accessibility.
+
+---
+
+Column Name              : Prior_Authorization_Required
+Description              : Indicates whether prior authorization is required.
+Purpose / Business Use   : Helps identify administrative barriers affecting prescription approval.
+
+---
+
+Column Name              : Step_Therapy_Required
+Description              : Indicates whether patients must try another therapy first.
+Purpose / Business Use   : Measures treatment access restrictions.
+
+---
+
+Column Name              : Effective_Date
+Description              : Date when the formulary or access change became effective.
+Purpose / Business Use   : Supports monitoring of access changes over time.
+
+---
+
+Column Name              : Coverage_Change_Flag
+Description              : Indicates whether coverage status changed from the previous period.
+Purpose / Business Use   : Helps detect new access opportunities or restrictions.
+
+---
+
+Column Name              : Previous_Formulary_Status
+Description              : Historical formulary tier before the latest update.
+Purpose / Business Use   : Enables comparison of access movement over time.
+
+---
+
+Column Name              : Impacted_HCP_Count
+Description              : Number of Healthcare Professionals impacted by the payer change.
+Purpose / Business Use   : Measures field and prescribing impact.
+
+---
+
+Column Name              : Covered_Lives
+Description              : Estimated number of members covered under the payer plan.
+Purpose / Business Use   : Quantifies business exposure and market opportunity.
+
+---
+
+Column Name              : Action_Priority
+Description              : Priority assigned for business response.
+Purpose / Business Use   : Helps teams determine urgency of intervention.
+
+---
+
+Column Name              : Recommended_Action
+Description              : Suggested action generated based on access conditions and business impact.
+Purpose / Business Use   : Guides field teams, market access teams, and engagement strategy execution.
+
+---

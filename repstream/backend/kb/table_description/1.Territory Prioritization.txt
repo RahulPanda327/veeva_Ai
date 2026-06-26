@@ -1,0 +1,147 @@
+Territory Prioritization :
+Purpose
+The Territory Prioritization module uses AI to help sales representatives identify which HCPs (Healthcare Professionals) should be contacted first and what action should be taken.
+
+Key Terms
+1. HCP (Healthcare Professional)
+A doctor or healthcare provider being targeted by the sales team.
+
+Examples:
+Dr. Sarah Davidson
+Dr. Michael Chen
+Dr. Anjali Patel
+
+2. Rx (Prescription)
+Rx = Prescription
+Represents the number of prescriptions written by an HCP for a product.
+
+Example
+Period	   Total Rx
+Q4 2025	    35
+Q1 2026	    47
+
+Interpretation:
+Prescriptions increased from 35 to 47.
+Positive growth trend.
+AI may assign higher priority.
+
+
+
+3. HCP Priority Ranking :
+AI assigns a priority level to each HCP.
+
+Priority Levels:
+Priority	      Meaning
+High	         Immediate opportunity; should be contacted soon
+Medium	         Moderate opportunity
+Low	         Lower immediate value
+
+Example:
+HCP	               Priority
+Dr. Sarah Davidson	High
+Dr. Anjali Patel	Medium
+
+
+4. AI-Generated Insights
+AI creates a short summary explaining why the HCP is important and what action should be taken.
+
+Example
+Insight:
+Rx volume increased 34% this quarter. Competitor brand share declining. High conversion potential.
+
+Meaning:
+Prescriptions are growing.
+Competitor influence is decreasing.
+Good opportunity for engagement.
+
+
+5. Prescription Trend Analysis
+Compares prescription volume across different periods.
+
+Dashboard Fields :
+Field	                         Meaning
+Total Rx Q1	          Current quarter prescriptions
+Total Rx Q4	          Previous quarter prescriptions
+Last Rx	                  Most recent prescription date
+
+Example
+Metric	               Value
+Total Rx Q1	        47
+Total Rx Q4	        35
+
+Result:
+Growth = 34%
+Positive trend
+
+
+6. Segment
+A business classification assigned to an HCP.
+
+Common Segments
+Segment	              Meaning
+Target A	Highest-value HCPs
+Target B	Medium-value HCPs
+Target C	Lower-value HCPs
+
+
+Example
+HCP	                  Segment
+Dr. Sarah Davidson	Target A
+Dr. Anjali Patel	Target B
+Important
+
+Segment ≠ Priority
+
+Segment	                                     Priority
+Business classification	               AI-generated ranking
+Usually static	                         Dynamic
+Target A/B/C	                       High/Medium/Low
+
+An HCP can be:
+Segment = Target A
+Priority = High
+
+or
+
+Segment = Target A
+Priority = Medium
+depending on current performance.
+
+
+7. Weekly Target Recommendation
+AI recommends how many HCPs should be contacted during the current week.
+
+Example
+This Week Target = 22
+
+Meaning:
+AI recommends contacting 22 HCPs this week.
+Selection is based on priority ranking and opportunity score.
+
+
+
+
+Flow :
+HCP Data
+(Prescriptions, Calls, Segments, Peer Network)
+            |
+            v
+      AI Analysis
+            |
+            +--> Rx Trends
+            +--> Growth Potential
+            +--> Competitive Signals
+            +--> Peer Network Insights
+            |
+            v
+     Priority Ranking
+(High / Medium / Low)
+            |
+            v
+   AI Generated Insights
+            |
+            v
+ Weekly Target Recommendation
+            |
+            v
+      Rep Action Plan

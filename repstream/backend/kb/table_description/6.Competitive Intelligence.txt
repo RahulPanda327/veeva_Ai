@@ -1,0 +1,32 @@
+Competitive Intelligence :
+The Competitive Intelligence module continuously monitors competitor activity across the territory and provides early alerts on changes that could impact brand performance.
+
+1. Competitor Anomaly & Trend Detection :
+AI tracks competitor messaging, market share changes, and field activity in real time.
+
+What it detects:
+New competitor claims or messaging
+Market share gains or losses
+Changes in competitor rep call activity
+
+Alert types:
+AI Detected – New or unusual competitor activity identified by AI.
+ML Trend – Gradual competitive trend developing over time.
+Anomaly – Sudden statistical change that differs from normal behavior.
+
+Business value:
+Gives early visibility into competitive threats before they significantly impact the territory.
+Helps teams respond proactively rather than reactively.
+
+
+2. Counter-Strategy Recommendations
+When available, the system provides approved counter-messaging or recommended actions.
+
+Examples:
+Reference supporting clinical evidence
+Use approved competitive positioning materials
+Notify payer or market access teams
+
+Business value:
+Helps reps respond quickly with compliant and evidence-based messaging.
+Reduces time spent analyzing competitor activity manually.

@@ -21,17 +21,50 @@ from app.services.action_center.payer_access_svc import get_payer_access
 router = APIRouter(prefix="/action-center", tags=["action-center"])
 
 
-@router.get("/alerts", response_model=AlertListResponse)
+@router.get(
+    "/alerts",
+    response_model=AlertListResponse,
+    summary="Active Alerts — full list or featured 3",
+    description="""
+Returns active ML-detected alerts for the rep's territory.
+
+## Query Parameters
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `featured` | bool | `false` | `false` = all alerts · `true` = top 1 per severity (max 3 cards) |
+
+## Response Fields
+- **`total`** — alerts returned in this call (affected by `featured` flag)
+- **`total_in_db`** — actual row count in `insight360_active_alerts` (always real DB count)
+- **`summary`** — KPI tile values + yellow banner data
+- **`alerts[]`** — alert cards sorted by severity (CRITICAL → HIGH → MEDIUM)
+
+## Alert Types
+| `alert_type` | UI Label | Detection |
+|---|---|---|
+| `COMPETITIVE` | Competitive threat | IsolationForest anomaly |
+| `HCP_DRIFT` | HCP gradual drift | Linear Regression slope |
+| `PAYER` | Formulary / payer change | Auto-detected |
+| `FORMULARY` | Formulary review | Auto-detected |
+
+## Detection Methods
+| `ai_detection_method` | Badge shown | Source |
+|---|---|---|
+| `ANOMALY_DETECTION` | ANOMALY DETECTION (purple) | IsolationForest on Rx data |
+| `ML_MODEL` | ML PREDICTION (blue) | Linear Regression on Rx trend |
+| `AUTO_DETECTED` | AUTO-DETECTED | Pre-computed from DB |
+
+## Note on `ai_territory_reach` and `ai_rx_risk`
+For `alert_type = PAYER` or `FORMULARY`:
+- `ai_territory_reach` → render as **Covered Lives** (not territory fraction)
+- `ai_rx_risk` → render as **Access Impact** (not Rx risk)
+""",
+)
 def active_alerts(
     featured: bool = False,
     rep: RepIdentity = Depends(get_current_rep),
     db: Session = Depends(get_db),
 ):
-    """
-    Return active alerts for the rep's territory.
-    Pass ?featured=true to get only the top 1 CRITICAL + top 1 HIGH + top 1 MEDIUM alert
-    (the three cards shown above the fold in the UI).
-    """
     return get_alerts(db, rep.territory_id, featured=featured)
 
 
@@ -91,17 +124,25 @@ def hcp_awareness(
 
 @router.get("/competitive-intel", response_model=CompetitiveIntelResponse)
 def competitive_intel(
+    featured: bool = False,
     rep: RepIdentity = Depends(get_current_rep),
     db: Session = Depends(get_db),
 ):
-    """Return competitive intelligence signals for the rep's territory."""
-    return get_competitive_intel(db, rep.territory_id)
+    """
+    Return competitive intelligence signals for the rep's territory.
+    Pass ?featured=true to get top 1 per threat tier (Critical/High, Medium, Low).
+    """
+    return get_competitive_intel(db, territory_id=rep.territory_id, featured=featured)
 
 
 @router.get("/payer-access", response_model=PayerAccessResponse)
 def payer_access(
+    featured: bool = False,
     rep: RepIdentity = Depends(get_current_rep),
     db: Session = Depends(get_db),
 ):
-    """Return payer formulary and access changes for the rep's territory."""
-    return get_payer_access(db, rep.territory_id)
+    """
+    Return payer formulary and access changes.
+    Pass ?featured=true to get top 1 per status tier (AI_ALERT, STABLE high, STABLE low).
+    """
+    return get_payer_access(db, territory_id=rep.territory_id, featured=featured)

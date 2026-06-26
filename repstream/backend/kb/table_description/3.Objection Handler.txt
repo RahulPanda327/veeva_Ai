@@ -1,0 +1,59 @@
+Objection Handler :
+The Objection Handler module helps sales representatives prepare for common physician objections by analyzing past call conversations and recommending the most effective approved responses.
+
+1. Call Transcript Ingestion :
+The system automatically collects and stores call transcripts from field interactions across the territory.
+
+Purpose:
+Creates a central repository of sales conversations.
+Provides the data needed for AI analysis.
+
+
+2. NLP Analysis
+AI uses Natural Language Processing (NLP) to analyze all call transcripts and identify recurring objection themes.
+
+Examples of objections:
+Concerns about side effects
+Complex dosing schedules
+Cost or reimbursement concerns
+
+Purpose:
+Detects trends that may not be obvious from individual calls.
+Helps understand what physicians are consistently asking about.
+
+
+3. Objection Classification
+The system groups and ranks objections based on how often they occur.
+
+What it shows:
+Objection statement
+Number of calls where it appeared
+Detection period
+Frequency label (High / Medium)
+
+Purpose:
+Helps reps focus on the most common barriers to adoption.
+Prioritizes preparation for frequently encountered objections.
+
+
+4. MLR-Approved Response Recommendations
+For each objection, the platform recommends the most effective MLR-approved response based on historical performance.
+
+What it includes:
+Recommended response script
+Supporting materials and SKU references
+Historical success/conversion rate
+
+Purpose:
+Ensures compliant messaging.
+Provides proven responses that have performed well in similar situations.
+
+
+
+Business Value :
+This page answers three key questions:
+| Question                                           | Answered By                             |
+| -------------------------------------------------- | --------------------------------------- |
+| What objections are physicians raising most often? | NLP Analysis & Objection Classification |
+| How frequently do they occur?                      | Frequency Ranking                       |
+| What is the best approved response?                | MLR-Approved Response Engine            |
