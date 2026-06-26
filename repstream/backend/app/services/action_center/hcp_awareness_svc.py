@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -475,17 +476,6 @@ def get_hcp_awareness(db: Session, territory_id: str) -> HCPAwarenessResponse:
         nlp_category, _, _ = _nlp_analyze(r.root_cause_signal)
         ai = _enrich(r, latest_score, slope, risk_score, nlp_category, pred_dir, pred_4w)
 
-        # Recent change: 3rd period → 4th period (e.g. Mar 25 → Apr 22)
-        prev_score = scores[-2] if len(scores) >= 2 and scores[-2] > 0 else None
-        if prev_score:
-            recent_change = round((latest_score - prev_score) / prev_score * 100, 1)
-            from_period_label = _PERIODS[-2][0]                        # e.g. "Mar 25"
-            from_month = from_period_label.split()[0]                  # e.g. "Mar"
-            change_from_period = f"{from_month} 1"                    # e.g. "Mar 1"
-        else:
-            recent_change = None
-            change_from_period = None
-
         enriched.append({
             "risk_score":      risk_score,
             "trend_direction": r.trend_direction,
@@ -497,12 +487,10 @@ def get_hcp_awareness(db: Session, territory_id: str) -> HCPAwarenessResponse:
                 ai_awareness_level          = _awareness_level(latest_score),
                 ai_trend_direction          = r.trend_direction,
                 ai_score_change_pct         = change_pct,
-                ai_recent_change_pct        = recent_change,
-                ai_change_from_period       = change_from_period,
+                ai_change_from_period       = _PERIODS[0][0],
                 analysis_badges             = ["NLP_ANALYSIS", "AI_SCORING", "PREDICTIVE_ANALYTICS"],
-                ai_icd10_prescribing_patterns = None,
+                ai_icd10_prescribing_patterns = [],
                 ai_aim_xr_activity          = ai.get("ai_aim_xr_activity"),
-                ai_recommended_action       = ai.get("ai_recommended_action"),
             ),
         })
 
@@ -510,10 +498,13 @@ def get_hcp_awareness(db: Session, territory_id: str) -> HCPAwarenessResponse:
     ai_declining_count = sum(1 for e in enriched if (e["trend_direction"] or "") == "Declining")
     items = [e["item"] for e in enriched]
 
+    start_period = _PERIODS[-2][0]
+    end_period   = _PERIODS[-1][0]
+    year         = datetime.now().year
+    declining_period = f"{start_period} - {end_period}, {year}"
+
     return HCPAwarenessResponse(
-        awareness_trend    = awareness_trend,
-        ai_predicted_trend = predicted_trend,
-        total              = len(items),
-        ai_declining_count = ai_declining_count,
-        items              = items,
+        awareness_trend     = awareness_trend,
+        ai_declining_period = declining_period,
+        items               = items,
     )

@@ -1,7 +1,7 @@
 """Pydantic v2 schemas for Action Center — Launch & Market Defense."""
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional, Union
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -182,19 +182,15 @@ class HCPAwarenessItem(BaseModel):
     ai_awareness_level: Literal["High", "Medium", "Low"] = "Medium"
     ai_trend_direction: Optional[str] = None
     ai_score_change_pct: Optional[float] = None
-    ai_recent_change_pct: Optional[float] = None
     ai_change_from_period: Optional[str] = None
     analysis_badges: List[str] = []
-    ai_icd10_prescribing_patterns: Optional[List[ICD10Pattern]] = None
+    ai_icd10_prescribing_patterns: List[ICD10Pattern] = []
     ai_aim_xr_activity: Optional[str] = None
-    ai_recommended_action: Optional[str] = None
 
 
 class HCPAwarenessResponse(BaseModel):
     awareness_trend: List[TrendPoint] = []
-    ai_predicted_trend: List[TrendPoint] = []
-    total: int
-    ai_declining_count: int = 0
+    ai_declining_period: Optional[str] = None
     items: List[HCPAwarenessItem]
 
 
@@ -203,55 +199,31 @@ class HCPAwarenessResponse(BaseModel):
 # ──────────────────────────────────────────────────
 
 class CompetitiveIntelItem(BaseModel):
-    intel_id: str
-    competitor_name: str
+    signal_id: str
+    signal_type: str                          # "AI DETECTED" / "ML TREND" / "ANOMALY"
+    signal_date: Optional[str] = None
     territory_id: str
     territory_name: Optional[str] = None
-    district_name: Optional[str] = None
-    detection_date: Optional[str] = None
+    region: Optional[str] = None
+    competitor_brand: str
+    rx_change_percent: float = 0.0
+    activity_change_percent: float = 0.0
+    territory_sales: Optional[float] = None
 
-    # Raw signal data from DB
-    signal_type: str                                # "AI DETECTED" / "ML TREND" / "ANOMALY"
-    description: Optional[str] = None              # Signal_Description
-    market_share_change_pct: float = 0.0            # parsed numeric e.g. -4.2
-    competitor_call_freq_change_pct: float = 0.0    # parsed numeric e.g. +68
-
-    # ── ML: AI Threat Scoring (AI SCORING badge) ─────────────────────────────
-    ai_threat_score: float = 0.0                    # 0-100 composite
-    ai_threat_level: Literal["Critical", "High", "Medium", "Low"] = "Medium"
-    ai_dot_color: str = "orange"                    # red / orange / blue
-
-    # ── ML: Linear Regression projected impact (ML TREND badge) ──────────────
-    ai_projected_share_loss_4w: Optional[float] = None  # predicted Rx share loss %
-    ai_trend_direction: Optional[str] = None             # Accelerating / Stable / Decelerating
-
-    # ── NLP classification (AI DETECTED badge) ────────────────────────────────
-    ai_nlp_signal_category: Optional[str] = None    # MESSAGING_CLAIM / MARKET_SHARE / REP_ACTIVITY / FORMULARY
-    ai_nlp_sentiment: Optional[str] = None          # Negative / Neutral
-    ai_nlp_keywords: List[str] = []
-
-    # ── GPT-4o ────────────────────────────────────────────────────────────────
-    ai_title: Optional[str] = None                  # GPT-4o generated headline
-    ai_supporting_evidence: Optional[str] = None    # GPT-4o: which Zenpep data to reference
-    ai_enhanced_description: Optional[str] = None   # GPT-4o: expanded description
-
-    # DB counter strategy
-    ai_counter_strategy: Optional[str] = None
-
-    # Badges to show on UI card
-    analysis_badges: List[str] = []   # ["AI_DETECTED", "ML_TREND", "ANOMALY", "AI_SCORING"]
-
-    ai_is_analyzed: bool = True
+    # ── GPT-4o enrichment ────────────────────────────────────────────────────
+    headline: Optional[str] = None
+    executive_summary: Optional[str] = None
+    counter_strategy: Optional[str] = None   # DB Counter_Strategy
+    risk_level: Optional[str] = None         # "HIGH" / "MEDIUM" / "LOW"
+    urgency_level: Optional[str] = None      # "IMMEDIATE" / "STANDARD" / "ROUTINE"
+    business_impact: Optional[str] = None
+    recommended_actions: List[str] = []
+    field_force_talking_points: List[str] = []
 
 
 class CompetitiveIntelResponse(BaseModel):
     items: List[CompetitiveIntelItem]
     total: int
-    ai_critical_count: int = 0
-    ai_high_threat_count: int = 0
-    ai_medium_threat_count: int = 0
-    ai_avg_threat_score: float = 0.0
-    ai_top_competitor: Optional[str] = None
 
 
 # ──────────────────────────────────────────────────
@@ -268,7 +240,7 @@ class PayerAccessItem(BaseModel):
     tier_current: Optional[str] = None          # "Tier 1" / "Tier 2" / "Non-Formulary"
     tier_previous: Optional[str] = None
     change_date: Optional[str] = None
-    pa_required: bool = False
+    pa_required: Optional[str] = None        # "Yes" / "No"
     covered_lives: int = 0
     affected_hcp_count: int = 0
 
@@ -281,8 +253,6 @@ class PayerAccessItem(BaseModel):
     ai_impact_score: float = 0.0                # 0-100 composite
     ai_impact_level: Literal["High", "Medium", "Low"] = "Low"
     ai_tier_change_direction: Optional[str] = None   # UPGRADE / DOWNGRADE / UNCHANGED
-    ai_impact_label: Optional[str] = None            # "Higher copays" / "PA Required" / "Access Win"
-
     # ── ML: Predictive Analytics (PREDICTIVE_ANALYTICS badge) ────────────────
     ai_abandonment_risk_pct: Optional[float] = None  # % patients likely to abandon Rx
     ai_projected_patient_impact: Optional[int] = None  # estimated patients impacted
@@ -294,7 +264,7 @@ class PayerAccessItem(BaseModel):
 
     # ── GPT-4o ────────────────────────────────────────────────────────────────
     ai_impact_summary: Optional[str] = None         # 1-sentence business impact
-    ai_action_plan: List[str] = []                  # step-by-step rep actions
+    ai_action_plan: Union[str, List[str]] = []       # List[str] when AI-flagged, str when DB fallback
     ai_pa_bridge_note: Optional[str] = None         # PA bridge language (if PA required)
 
     # DB recommended action

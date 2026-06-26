@@ -87,6 +87,16 @@ def _tier_label(tier: Optional[str]) -> str:
     return _TIER_LABEL.get((tier or "").lower().strip(), tier or "Unknown")
 
 
+def _tier_str(val: Optional[str]) -> Optional[str]:
+    """Normalize tier value: '2' → 'Tier 2', 'Tier 2' → 'Tier 2', None → None."""
+    if val is None:
+        return None
+    v = str(val).strip()
+    if v.isdigit():
+        return f"Tier {v}"
+    return v
+
+
 def _tier_change_direction(current: Optional[str], previous: Optional[str]) -> str:
     c, p = _tier_rank(current), _tier_rank(previous)
     if c > p:
@@ -327,32 +337,36 @@ def _call_gpt4o(row: PayerAccess) -> Dict[str, str]:
 def _build_item(row: PayerAccess) -> PayerAccessItem:
     covered_lives = _parse_int(row.covered_lives)
     hcp_count     = _parse_int(row.affected_hcp_count)
-    pa_required   = (row.pa_required or "").strip().upper() == "YES"
+    pa_req_bool   = (row.pa_required or "").strip().upper() == "YES"
     ai_alert      = (row.ai_alert_flag or "").strip().upper() == "YES"
     tier_changed  = (row.recent_tier_change or "").strip().upper() == "YES"
 
+    # Normalize tier strings ("2" → "Tier 2")
+    tier_cur  = _tier_str(row.tier_current)
+    tier_prev = _tier_str(row.tier_previous)
+
     # Derived display fields
-    tier_label    = _tier_label(row.tier_current)
-    direction     = _tier_change_direction(row.tier_current, row.tier_previous)
+    tier_label    = _tier_label(tier_cur)
+    direction     = _tier_change_direction(tier_cur, tier_prev)
     status_badge  = "AI_ALERT" if ai_alert else "STABLE"
     change_badge  = "CHANGE_DETECTED" if tier_changed else None
 
     # Technique 1 — AI Impact Scoring
     impact_score, impact_level, impact_label = _impact_score(
-        row.tier_current, row.tier_previous, pa_required,
+        tier_cur, tier_prev, pa_req_bool,
         covered_lives, row.channel_name, ai_alert,
     )
 
     # Technique 2 — ML Predictive Analytics
     abandonment_pct, projected_impact = _predict_abandonment(
-        direction, row.tier_current, pa_required, covered_lives
+        direction, tier_cur, pa_req_bool, covered_lives
     )
 
     # Technique 3 — NLP
     nlp_category, nlp_urgency, nlp_keywords = _nlp_classify(row.recommended_action)
 
-    # Technique 4 — GPT-4o
-    gpt = _call_gpt4o(row)
+    # Technique 4 — GPT-4o (only used when AI-flagged)
+    gpt = _call_gpt4o(row) if ai_alert else {}
 
     # Build analysis badges
     badges: List[str] = ["AI_SCORING"]
@@ -369,10 +383,10 @@ def _build_item(row: PayerAccess) -> PayerAccessItem:
         payer_name=row.payer_name or "Unknown",
         mco_org_name=row.mco_org_name,
         channel_name=row.channel_name,
-        tier_current=row.tier_current,
-        tier_previous=row.tier_previous,
+        tier_current=tier_cur,
+        tier_previous=tier_prev,
         change_date=row.change_date if row.change_date else None,
-        pa_required=pa_required,
+        pa_required="Yes" if pa_req_bool else "No",
         covered_lives=covered_lives,
         affected_hcp_count=hcp_count,
         tier_label_current=tier_label,
@@ -381,14 +395,13 @@ def _build_item(row: PayerAccess) -> PayerAccessItem:
         ai_impact_score=impact_score,
         ai_impact_level=impact_level,
         ai_tier_change_direction=direction,
-        ai_impact_label=impact_label,
         ai_abandonment_risk_pct=abandonment_pct,
         ai_projected_patient_impact=projected_impact,
         ai_nlp_action_category=nlp_category,
         ai_nlp_urgency=nlp_urgency,
         ai_nlp_keywords=nlp_keywords,
         ai_impact_summary=gpt.get("ai_impact_summary"),
-        ai_action_plan=gpt.get("ai_action_plan"),
+        ai_action_plan=gpt.get("ai_action_plan") if ai_alert else (row.recommended_action or ""),
         ai_pa_bridge_note=gpt.get("ai_pa_bridge_note") or None,
         recommended_action=row.recommended_action,
         analysis_badges=badges,
