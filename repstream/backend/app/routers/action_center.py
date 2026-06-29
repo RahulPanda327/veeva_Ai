@@ -6,12 +6,13 @@ from app.database import get_db
 from app.utils.auth import get_current_rep, RepIdentity
 from app.models.active_alerts import ActiveAlert
 from app.schemas.action_center import (
-    AlertListResponse,
+    ActiveAlertListResponse,
+    ActionCenterSummary,
     HCPAwarenessResponse,
     CompetitiveIntelResponse,
     PayerAccessResponse,
 )
-from app.services.action_center.alert_engine import get_alerts
+from app.services.action_center.alert_engine import get_alerts, get_alert_summary
 from app.services.action_center.alert_enricher import enrich_alert
 from app.services.action_center.alert_pipeline import run_pipeline
 from app.services.action_center.hcp_awareness_svc import get_hcp_awareness
@@ -23,7 +24,7 @@ router = APIRouter(prefix="/action-center", tags=["action-center"])
 
 @router.get(
     "/alerts",
-    response_model=AlertListResponse,
+    response_model=ActiveAlertListResponse,
     summary="Active Alerts — full list or featured 3",
     description="""
 Returns active ML-detected alerts for the rep's territory.
@@ -66,6 +67,18 @@ def active_alerts(
     db: Session = Depends(get_db),
 ):
     return get_alerts(db, rep.territory_id, featured=featured)
+
+
+@router.get(
+    "/alerts/summary",
+    response_model=ActionCenterSummary,
+    summary="Active Alerts — KPI summary tiles only",
+)
+def alert_summary(
+    rep: RepIdentity = Depends(get_current_rep),
+    db: Session = Depends(get_db),
+):
+    return get_alert_summary(db, rep.territory_id)
 
 
 @router.post("/detect")

@@ -37,8 +37,10 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest
@@ -46,6 +48,13 @@ from sklearn.preprocessing import StandardScaler
 from sqlalchemy import text
 
 log = logging.getLogger(__name__)
+
+# ── Model persistence paths ───────────────────────────────────────────────────
+# Stored at: repstream/backend/models/
+MODEL_DIR          = Path(__file__).resolve().parents[3] / "models"
+ISO_MODEL_FILE     = MODEL_DIR / "isolation_forest.pkl"
+SCALER_FILE        = MODEL_DIR / "scaler.pkl"
+ALERTS_CACHE_FILE  = MODEL_DIR / "detected_alerts.pkl"
 
 # ── Thresholds ────────────────────────────────────────────────────────────────
 ANOMALY_CONTAMINATION = 0.10   # expect ~10% anomalous HCPs
@@ -289,16 +298,28 @@ def _detect_anomalies(pivot: pd.DataFrame) -> pd.DataFrame:
     feature_df = pd.DataFrame(records)
     X = feature_df[["rx_ratio", "comp_change", "share_change"]].values
 
-    scaler   = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    iso = IsolationForest(
-        contamination=ANOMALY_CONTAMINATION,
-        random_state=42,
-        n_estimators=100,
-    )
-    preds  = iso.fit_predict(X_scaled)
-    scores = iso.score_samples(X_scaled)
+    if ISO_MODEL_FILE.exists() and SCALER_FILE.exists():
+        log.info("Loading IsolationForest + scaler from saved files")
+        iso    = joblib.load(ISO_MODEL_FILE)
+        scaler = joblib.load(SCALER_FILE)
+        X_scaled = scaler.transform(X)
+        preds    = iso.predict(X_scaled)
+        scores   = iso.score_samples(X_scaled)
+    else:
+        log.info("Training IsolationForest for the first time — saving to %s", MODEL_DIR)
+        scaler   = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        iso = IsolationForest(
+            contamination=ANOMALY_CONTAMINATION,
+            random_state=42,
+            n_estimators=100,
+        )
+        preds  = iso.fit_predict(X_scaled)
+        scores = iso.score_samples(X_scaled)
+        MODEL_DIR.mkdir(parents=True, exist_ok=True)
+        joblib.dump(iso,    ISO_MODEL_FILE)
+        joblib.dump(scaler, SCALER_FILE)
+        log.info("Saved: %s, %s", ISO_MODEL_FILE, SCALER_FILE)
 
     feature_df["is_anomaly"]    = preds == -1
     feature_df["anomaly_score"] = scores
@@ -355,7 +376,9 @@ def _detect_drift(pivot: pd.DataFrame) -> pd.DataFrame:
 def detect_alerts(engine) -> List[DetectedAlert]:
     """
     Run full ML pipeline on real Rx data.
-    Results cached 1 hour to avoid repeated heavy queries.
+    First run: trains models, saves to models/*.pkl files.
+    Subsequent runs: loads from saved files instantly.
+    In-memory cache (1 hour) avoids even the file load on repeated calls.
     """
     cache_key = "ml_alerts"
     cached = _ML_CACHE.get(cache_key)
@@ -363,7 +386,14 @@ def detect_alerts(engine) -> List[DetectedAlert]:
         log.info("ML cache hit — returning %d cached alerts", len(cached["data"]))
         return cached["data"]
 
-    log.info("Running ML pipeline on Rx data...")
+    # Load from saved .pkl file if it exists (skips DB query + retraining)
+    if ALERTS_CACHE_FILE.exists():
+        log.info("Loading detected alerts from %s", ALERTS_CACHE_FILE)
+        alerts = joblib.load(ALERTS_CACHE_FILE)
+        _ML_CACHE[cache_key] = {"ts": time.time(), "data": alerts}
+        return alerts
+
+    log.info("First run — training ML pipeline on Rx data...")
 
     try:
         pivot = _load_pivot(engine)
@@ -380,80 +410,86 @@ def detect_alerts(engine) -> List[DetectedAlert]:
     alerts: List[DetectedAlert] = []
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
 
-    # ── Technique 1: IsolationForest ─────────────────────────────────────────
+    # ── Technique 1: IsolationForest — one alert per territory ───────────────
     anomaly_df = _detect_anomalies(pivot)
     if not anomaly_df.empty:
-        hcp_ids          = anomaly_df["hcp_id"].tolist()
-        hcp_info         = _load_hcp_info(engine, hcp_ids)
-        avg_rx_change    = float(anomaly_df["rx_change_pct"].mean())
-        hcp_count        = len(hcp_ids)
-        rx_risk          = _rx_risk(avg_rx_change, hcp_count)
-        sev              = _severity(rx_risk, hcp_count)
+        all_hcp_ids = anomaly_df["hcp_id"].tolist()
+        hcp_info    = _load_hcp_info(engine, all_hcp_ids)
 
-        # Group by territory
-        territory_raws   = anomaly_df["territory_raw"].dropna().unique().tolist()
-        territory_id     = _extract_territory_id(territory_raws[0]) if territory_raws else "UNKNOWN"
-        territory_name   = hcp_info.get(hcp_ids[0], {}).get("territory_name") or territory_id
-        reach            = _territory_reach(len(set(_extract_territory_id(t) for t in territory_raws)))
+        anomaly_df["territory_id"] = anomaly_df["territory_raw"].apply(_extract_territory_id)
+        for territory_id, grp in anomaly_df.groupby("territory_id"):
+            hcp_ids       = grp["hcp_id"].tolist()
+            hcp_count     = len(hcp_ids)
+            avg_rx_change = float(grp["rx_change_pct"].mean())
+            rx_risk       = _rx_risk(avg_rx_change, hcp_count)
+            sev           = _severity(rx_risk, hcp_count)
+            territory_name = hcp_info.get(hcp_ids[0], {}).get("territory_name") or territory_id
+            reach          = _territory_reach(anomaly_df["territory_id"].nunique())
+            icd10          = _build_icd10(hcp_info, hcp_ids[:100], hcp_count)
 
-        icd10 = _build_icd10(hcp_info, hcp_ids[:100], hcp_count)
+            alerts.append(DetectedAlert(
+                alert_id               = _alert_id("ANOM", territory_id),
+                alert_type             = "COMPETITIVE",
+                severity               = sev,
+                detection_method       = "ANOMALY_DETECTION",
+                territory_id           = territory_id,
+                territory_name         = territory_name,
+                detected_at            = now_str,
+                ai_affected_hcp_count  = hcp_count,
+                ai_territory_reach     = reach,
+                ai_rx_risk             = rx_risk,
+                ai_icd10_codes_affected= icd10,
+                ai_detection_lead_weeks= round(abs(avg_rx_change) / 10, 1),
+                avg_rx_change_pct      = avg_rx_change,
+                affected_hcp_ids       = hcp_ids,
+            ))
+            log.info("IsolationForest [%s]: %d HCPs | rx_change=%.1f%% | severity=%s",
+                     territory_id, hcp_count, avg_rx_change, sev)
 
-        alerts.append(DetectedAlert(
-            alert_id               = _alert_id("ANOM", territory_id),
-            alert_type             = "COMPETITIVE",
-            severity               = sev,
-            detection_method       = "ANOMALY_DETECTION",
-            territory_id           = territory_id,
-            territory_name         = territory_name,
-            detected_at            = now_str,
-            ai_affected_hcp_count  = hcp_count,
-            ai_territory_reach     = reach,
-            ai_rx_risk             = rx_risk,
-            ai_icd10_codes_affected= icd10,
-            ai_detection_lead_weeks= round(abs(avg_rx_change) / 10, 1),
-            avg_rx_change_pct      = avg_rx_change,
-            affected_hcp_ids       = hcp_ids,
-        ))
-        log.info("IsolationForest: %d anomalous HCPs | rx_change=%.1f%% | severity=%s",
-                 hcp_count, avg_rx_change, sev)
-
-    # ── Technique 2: Linear Regression ───────────────────────────────────────
+    # ── Technique 2: Linear Regression — one alert per territory ─────────────
     drift_df = _detect_drift(pivot)
     if not drift_df.empty and len(drift_df) >= DRIFT_MIN_HCP_COUNT:
-        hcp_ids        = drift_df["hcp_id"].tolist()
-        hcp_info       = _load_hcp_info(engine, hcp_ids)
-        avg_slope      = float(drift_df["slope"].mean())
-        avg_rx_change  = float(drift_df["rx_change_pct"].mean())
-        hcp_count      = len(hcp_ids)
-        rx_risk        = _rx_risk(avg_rx_change, hcp_count)
-        sev            = _severity(rx_risk, hcp_count)
+        all_hcp_ids = drift_df["hcp_id"].tolist()
+        hcp_info    = _load_hcp_info(engine, all_hcp_ids)
 
-        territory_raws = drift_df["territory_raw"].dropna().unique().tolist()
-        territory_id   = _extract_territory_id(territory_raws[0]) if territory_raws else "UNKNOWN"
-        territory_name = hcp_info.get(hcp_ids[0], {}).get("territory_name") or territory_id
-        reach          = _territory_reach(len(set(_extract_territory_id(t) for t in territory_raws)))
+        drift_df["territory_id"] = drift_df["territory_raw"].apply(_extract_territory_id)
+        for territory_id, grp in drift_df.groupby("territory_id"):
+            hcp_ids       = grp["hcp_id"].tolist()
+            if len(hcp_ids) < DRIFT_MIN_HCP_COUNT:
+                continue
+            hcp_count     = len(hcp_ids)
+            avg_slope     = float(grp["slope"].mean())
+            avg_rx_change = float(grp["rx_change_pct"].mean())
+            rx_risk       = _rx_risk(avg_rx_change, hcp_count)
+            sev           = _severity(rx_risk, hcp_count)
+            territory_name = hcp_info.get(hcp_ids[0], {}).get("territory_name") or territory_id
+            reach          = _territory_reach(drift_df["territory_id"].nunique())
+            icd10          = _build_icd10(hcp_info, hcp_ids[:100], hcp_count)
 
-        icd10 = _build_icd10(hcp_info, hcp_ids[:100], hcp_count)
+            alerts.append(DetectedAlert(
+                alert_id               = _alert_id("DRFT", territory_id),
+                alert_type             = "HCP_DRIFT",
+                severity               = sev,
+                detection_method       = "ML_MODEL",
+                territory_id           = territory_id,
+                territory_name         = territory_name,
+                detected_at            = now_str,
+                ai_affected_hcp_count  = hcp_count,
+                ai_territory_reach     = reach,
+                ai_rx_risk             = rx_risk,
+                ai_icd10_codes_affected= icd10,
+                ai_detection_lead_weeks= round(abs(avg_slope) / 2, 1),
+                avg_rx_change_pct      = avg_rx_change,
+                avg_slope              = avg_slope,
+                affected_hcp_ids       = hcp_ids,
+            ))
+            log.info("LinearRegression [%s]: %d drifting HCPs | slope=%.2f | severity=%s",
+                     territory_id, hcp_count, avg_slope, sev)
 
-        alerts.append(DetectedAlert(
-            alert_id               = _alert_id("DRFT", territory_id),
-            alert_type             = "HCP_DRIFT",
-            severity               = sev,
-            detection_method       = "ML_MODEL",
-            territory_id           = territory_id,
-            territory_name         = territory_name,
-            detected_at            = now_str,
-            ai_affected_hcp_count  = hcp_count,
-            ai_territory_reach     = reach,
-            ai_rx_risk             = rx_risk,
-            ai_icd10_codes_affected= icd10,
-            ai_detection_lead_weeks= round(abs(avg_slope) / 2, 1),
-            avg_rx_change_pct      = avg_rx_change,
-            avg_slope              = avg_slope,
-            affected_hcp_ids       = hcp_ids,
-        ))
-        log.info("LinearRegression: %d drifting HCPs | slope=%.2f | severity=%s",
-                 hcp_count, avg_slope, sev)
+    # Save results to file — subsequent runs load instantly without retraining
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    joblib.dump(alerts, ALERTS_CACHE_FILE)
+    log.info("Saved detected alerts → %s", ALERTS_CACHE_FILE)
 
     _ML_CACHE[cache_key] = {"ts": time.time(), "data": alerts}
     log.info("ML pipeline complete — %d alerts detected", len(alerts))

@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 _SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
@@ -61,8 +61,13 @@ from app.services.action_center.alert_detector import DetectedAlert, detect_aler
 from app.database import engine as db_engine
 from app.schemas.action_center import (
     ActionCenterSummary,
+    ActiveAlertListResponse,
+    AlertGroups,
     AlertItem,
     AlertListResponse,
+    CompetitiveAlertItem,
+    HCPAlertItem,
+    PayerAlertItem,
     ICD10Affected,
     SupportingMaterial,
 )
@@ -303,38 +308,25 @@ _SAMPLE_ALERT_ITEMS: List[AlertItem] = [
     AlertItem(
         alert_id="ALERT-008",
         alert_type="HCP_DRIFT",
-        title="Gradual Rx decline — 6 HCPs showing consistent volume reduction",
+        title="HCP awareness score decline in endocrinology",
         description=(
-            "Linear regression model flagged 6 additional HCPs with consistent monthly Zenpep volume "
-            "reduction. Average slope: -1.2 Rx/month. Early detection allows proactive intervention."
+            "3 HCPs showing decreased awareness of key product benefits between Apr 6-27, 2026. "
+            "May indicate need for re-education."
         ),
-        detected_at="Apr 24, 2026 at 5:30 PM",
+        detected_at="Apr 27, 2026 at 2:15 PM",
         period="Q1 2026 (Jan - Mar)",
         ai_severity="MEDIUM",
         ai_detection_method="ML_MODEL",
-        ai_affected_hcp_count=6,
-        ai_territory_reach="2/12",
-        ai_rx_risk="Low",
-        ai_icd10_codes_affected=[
-            ICD10Affected(code="K86.81", label="Exocrine pancreatic insufficiency", hcp_count=4),
-            ICD10Affected(code="K90.3",  label="Pancreatic steatorrhea",            hcp_count=2),
-        ],
-        ai_prescribing_drift_note=(
-            "Trend detected 2+ weeks before call-center reporting. Lower urgency but schedule "
-            "standard re-engagement within 2 weeks to prevent escalation."
-        ),
-        ai_detection_lead_weeks=2.2,
-        ai_counter_script=(
-            "Schedule routine re-engagement. Bring updated dosing guide and patient education "
-            "materials. Reinforce adherence benefits and ZenConnect co-pay support. "
-            "No urgency — standard monitoring call."
-        ),
-        ai_supporting_materials=[
-            SupportingMaterial(title="Zenpep Dosing Guide",    sku="DG-2024-01"),
-            SupportingMaterial(title="Patient Education Kit",  sku=None),
-        ],
+        ai_affected_hcp_count=3,
+        ai_territory_reach=None,
+        ai_rx_risk=None,
+        ai_icd10_codes_affected=[],
+        ai_prescribing_drift_note=None,
+        ai_detection_lead_weeks=None,
+        ai_counter_script=None,
+        ai_supporting_materials=[],
         is_acknowledged=False, is_dismissed=False, is_deployed=False, ai_is_detected=True,
-        recommended_actions=["Monitor", "View Affected HCPs", "Dismiss"],
+        recommended_actions=["Schedule Calls", "Review Later"],
     ),
 ]
 
@@ -452,7 +444,11 @@ def _icd10_for_alert(db: Session, row: ActiveAlert) -> List[ICD10Affected]:
 
 # ── STEP 2b: recommended actions — rule-based on severity ────────────────────
 
-def _recommended_actions(severity: str) -> List[str]:
+def _recommended_actions(severity: str, alert_type: str = "COMPETITIVE") -> List[str]:
+    if alert_type in ("PAYER", "FORMULARY"):
+        return ["View HCP List", "Access Resources", "Acknowledge"]
+    if alert_type == "HCP_DRIFT":
+        return ["Schedule Calls", "Review Later"]
     if severity in ("CRITICAL", "HIGH"):
         return ["Deploy to Field", "View Affected HCPs", "Dismiss"]
     if severity == "MEDIUM":
@@ -490,7 +486,7 @@ def _build_ml_alert_item(ml: DetectedAlert, ai: dict) -> AlertItem:
         title                     = ai.get("title") or f"{ml.detection_method} — {ml.ai_affected_hcp_count} HCPs affected",
         description               = ai.get("description") or "",
         detected_at               = ml.detected_at,
-        period                    = "Q1 2026",
+        period                    = "",
         ai_severity               = ml.severity,
         ai_detection_method       = ml.detection_method,
         ai_affected_hcp_count     = ml.ai_affected_hcp_count,
@@ -505,7 +501,7 @@ def _build_ml_alert_item(ml: DetectedAlert, ai: dict) -> AlertItem:
         is_dismissed              = False,
         is_deployed               = False,
         ai_is_detected            = True,
-        recommended_actions       = _recommended_actions(ml.severity),
+        recommended_actions       = _recommended_actions(ml.severity, ml.alert_type),
     )
 
 
@@ -522,7 +518,7 @@ def _build_alert_item(
 
     raw_method       = (row.detection_method or "").strip().upper()
     ai_detect_method = _DETECTION_MAP.get(raw_method, "AUTO_DETECTED")
-    alert_type       = "HCP_DRIFT" if raw_method == "ML TREND" else "COMPETITIVE"
+    alert_type       = _classify_alert_type(row.title or "", raw_method)
 
     # STEP 3 — language from GPT-4o
     title         = ai.get("title") or row.title or ""
@@ -537,7 +533,7 @@ def _build_alert_item(
         title                     = title,
         description               = description,
         detected_at               = row.detected_at or "",
-        period                    = "Q1 2026",
+        period                    = "",
         ai_severity               = ai_severity,
         ai_detection_method       = ai_detect_method,
         ai_affected_hcp_count     = int(row.ai_affected_hcp_count or 0),
@@ -552,8 +548,87 @@ def _build_alert_item(
         is_dismissed              = False,
         is_deployed               = False,
         ai_is_detected            = True,
-        recommended_actions       = _recommended_actions(ai_severity),  # STEP 2 — rule-based
+        recommended_actions       = _recommended_actions(ai_severity, alert_type),  # STEP 2 — rule-based
     )
+
+
+# ── Alert type NLP classifier ─────────────────────────────────────────────────
+
+_PAYER_KEYWORDS    = ["payer", "formulary", "tier", "coverage", "insurance", "pa required", "prior auth"]
+_HCP_DRIFT_KEYWORDS = ["awareness", "detailing frequency", "engagement", "drift", "re-education", "decline"]
+
+def _classify_alert_type(title: str, raw_method: str) -> str:
+    lower = title.lower()
+    if any(k in lower for k in _PAYER_KEYWORDS):
+        return "PAYER"
+    if any(k in lower for k in _HCP_DRIFT_KEYWORDS):
+        return "HCP_DRIFT"
+    if raw_method == "ML TREND":
+        return "HCP_DRIFT"
+    return "COMPETITIVE"
+
+
+# ── Build synthetic PAYER AlertItem from payer_access table ──────────────────
+
+def _payer_alerts_from_db(db: Session) -> List[AlertItem]:
+    """Pull ALL AI-flagged payer rows from DB — dynamic, changes as DB updates."""
+    try:
+        from app.models.payer_access import PayerAccess
+        rows = (
+            db.query(PayerAccess)
+            .filter(PayerAccess.ai_alert_flag == "Yes")
+            .all()
+        )
+        if not rows:
+            rows = db.query(PayerAccess).limit(5).all()
+        if not rows:
+            return []
+
+        result = []
+        for row in rows:
+            lives  = row.covered_lives or "0"
+            hcps   = int(row.affected_hcp_count or 0) if row.affected_hcp_count else 0
+            tier_c = row.tier_current or "Unknown"
+            tier_p = row.tier_previous or "Unknown"
+            payer  = row.payer_name or "Payer"
+                # Map impact_level from DB → severity
+            impact    = (row.impact_level or "").upper()
+            sev_map   = {"HIGH": "HIGH", "MEDIUM": "MEDIUM", "LOW": "LOW"}
+            ai_sev    = sev_map.get(impact, "MEDIUM")
+            # recommended_actions from DB column (pipe-separated) or empty
+            rec_actions = [r.strip() for r in (row.recommended_action or "").split("|") if r.strip()] or []
+
+            result.append(AlertItem(
+                alert_id              = f"PAYER-{row.plan_id}",
+                alert_type            = "PAYER",
+                title                 = f"Payer formulary update — {payer} Tier change" if payer else "",
+                description           = (
+                    f"{payer} moved our product from {tier_p} to {tier_c} effective {row.change_date}. "
+                    f"Affects approximately {lives} covered lives in your territory."
+                ) if row.change_date else "",
+                detected_at           = row.change_date or "",
+                period                = "",
+                ai_severity           = ai_sev,
+                ai_detection_method   = "AUTO_DETECTED",
+                ai_affected_hcp_count = hcps,
+                ai_territory_reach    = str(lives) if lives else "",
+                ai_rx_risk            = row.impact_level or "",
+                ai_icd10_codes_affected   = [],
+                ai_prescribing_drift_note = row.recommended_action or "",
+                ai_detection_lead_weeks   = None,
+                ai_counter_script         = None,
+                ai_supporting_materials   = [],
+                is_acknowledged = False,
+                is_dismissed    = False,
+                is_deployed     = False,
+                ai_is_detected  = True,
+                recommended_actions = rec_actions,
+            ))
+        return result
+    except Exception as exc:
+        log.warning("Could not build payer alerts from DB: %s", exc)
+        return []
+        return None
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -590,10 +665,9 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
             log.warning("DB query for alerts failed (%s), will use sample data", e)
         alerts = [_build_alert_item(r, enrich(r), _icd10_for_alert(db, r)) for r in rows]
 
-    # ── STEP 3: Sample data fallback ─────────────────────────────────────────
+    # No data → return empty sections
     if not alerts:
-        log.info("No alerts from ML or DB — using sample data")
-        alerts = list(_SAMPLE_ALERT_ITEMS)
+        log.info("No alerts from ML or DB — returning empty")
 
     # ── Sort: severity ascending, then detected_at descending within each group
     alerts.sort(key=lambda a: (
@@ -609,37 +683,190 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
     drift    = sum(a.ai_affected_hcp_count for a in all_alerts if a.alert_type == "HCP_DRIFT")
     unread   = len(all_alerts)
 
+    # Group alerts by module type
+    competitive_alerts: List[CompetitiveAlertItem] = [
+        CompetitiveAlertItem(
+            alert_id                  = a.alert_id,
+            ai_severity               = a.ai_severity,
+            ai_detection_method       = a.ai_detection_method,
+            detected_at               = a.detected_at,
+            title                     = a.title,
+            description               = a.description,
+            ai_affected_hcp_count     = a.ai_affected_hcp_count,
+            ai_territory_reach        = a.ai_territory_reach,
+            ai_rx_risk                = a.ai_rx_risk,
+            ai_icd10_codes_affected   = a.ai_icd10_codes_affected,
+            ai_prescribing_drift_note = a.ai_prescribing_drift_note,
+            ai_counter_script         = a.ai_counter_script,
+            ai_supporting_materials   = a.ai_supporting_materials,
+            recommended_actions       = a.recommended_actions,
+        )
+        for a in alerts if a.alert_type == "COMPETITIVE"
+    ]
+    payer_alerts: List[PayerAlertItem] = [
+        PayerAlertItem(
+            alert_id                  = a.alert_id,
+            ai_severity               = a.ai_severity,
+            ai_detection_method       = a.ai_detection_method,
+            detected_at               = a.detected_at,
+            title                     = a.title,
+            description               = a.description,
+            ai_affected_hcp_count     = a.ai_affected_hcp_count,
+            ai_territory_reach        = a.ai_territory_reach,
+            ai_rx_risk                = a.ai_rx_risk,
+            ai_prescribing_drift_note = a.ai_prescribing_drift_note,
+            recommended_actions       = a.recommended_actions,
+        )
+        for a in alerts if a.alert_type in ("PAYER", "FORMULARY")
+    ]
+    hcp_awareness_alerts: List[HCPAlertItem] = [
+        HCPAlertItem(
+            alert_id            = a.alert_id,
+            ai_severity         = a.ai_severity,
+            ai_detection_method = a.ai_detection_method,
+            detected_at         = a.detected_at,
+            title               = a.title,
+            description         = a.description,
+            recommended_actions = a.recommended_actions,
+        )
+        for a in alerts if a.alert_type == "HCP_DRIFT"
+    ]
+
+    # Payer alerts — directly from DB only, no sample fallback
+    if not payer_alerts:
+        payer_alerts = [
+            PayerAlertItem(
+                alert_id                  = a.alert_id,
+                ai_severity               = a.ai_severity,
+                ai_detection_method       = a.ai_detection_method,
+                detected_at               = a.detected_at,
+                title                     = a.title,
+                description               = a.description,
+                ai_affected_hcp_count     = a.ai_affected_hcp_count,
+                ai_territory_reach        = a.ai_territory_reach,
+                ai_rx_risk                = a.ai_rx_risk,
+                ai_prescribing_drift_note = a.ai_prescribing_drift_note,
+                recommended_actions       = a.recommended_actions,
+            )
+            for a in _payer_alerts_from_db(db)
+        ]
+
     if featured:
-        # Within each severity bucket pick the single most impactful alert
-        buckets: Dict[str, List[AlertItem]] = {}
-        for a in alerts:
-            buckets.setdefault(a.ai_severity, []).append(a)
+        competitive_alerts   = competitive_alerts[:1]
+        hcp_awareness_alerts = hcp_awareness_alerts[:1]
+        payer_alerts         = payer_alerts[:1]
 
-        featured_alerts = []
-        for sev in ("CRITICAL", "HIGH", "MEDIUM"):
-            group = buckets.get(sev, [])
-            if group:
-                featured_alerts.append(max(group, key=_impact_score))
-        alerts = featured_alerts
+    # Build 3 sectioned lists, each numbered independently from alert_1
+    def _build_competitive(items):
+        return [
+            {f"alert_{i+1}": {
+                "alert_type":               "competitive",
+                "alert_id":                 a.alert_id,
+                "ai_severity":              a.ai_severity,
+                "ai_detection_method":      a.ai_detection_method,
+                "detected_at":              a.detected_at,
+                "title":                    a.title,
+                "description":              a.description,
+                "ai_affected_hcp_count":    a.ai_affected_hcp_count,
+                "ai_territory_reach":       a.ai_territory_reach,
+                "ai_rx_risk":               a.ai_rx_risk,
+                "ai_icd10_codes_affected":  [x.model_dump() for x in a.ai_icd10_codes_affected],
+                "ai_prescribing_drift_note": a.ai_prescribing_drift_note,
+                "ai_counter_script":        a.ai_counter_script,
+                "ai_supporting_materials":  [m.model_dump() for m in a.ai_supporting_materials],
+                "recommended_actions":      a.recommended_actions,
+            }}
+            for i, a in enumerate(items)
+        ]
 
-    now_str = datetime.now(timezone.utc).strftime("%b %d, %Y %I:%M %p")
+    def _build_payer(items):
+        return [
+            {f"alert_{i+1}": {
+                "alert_type":               "payer",
+                "alert_id":                 a.alert_id,
+                "ai_severity":              a.ai_severity,
+                "ai_detection_method":      a.ai_detection_method,
+                "detected_at":              a.detected_at,
+                "title":                    a.title,
+                "description":              a.description,
+                "ai_affected_hcp_count":    a.ai_affected_hcp_count,
+                "ai_territory_reach":       a.ai_territory_reach,
+                "ai_rx_risk":               a.ai_rx_risk,
+                "ai_prescribing_drift_note": a.ai_prescribing_drift_note,
+                "recommended_actions":      a.recommended_actions,
+            }}
+            for i, a in enumerate(items)
+        ]
 
-    summary = ActionCenterSummary(
+    def _build_hcp(items):
+        return [
+            {f"alert_{i+1}": {
+                "alert_type":          "hcp_awareness",
+                "alert_id":            a.alert_id,
+                "ai_severity":         a.ai_severity,
+                "ai_detection_method": a.ai_detection_method,
+                "detected_at":         a.detected_at,
+                "title":               a.title,
+                "description":         a.description,
+                "recommended_actions": a.recommended_actions,
+            }}
+            for i, a in enumerate(items)
+        ]
+
+    from app.schemas.action_center import ActiveAlertSection
+    return ActiveAlertListResponse(
+        active_alerts=ActiveAlertSection(
+            competitive_alerts   = _build_competitive(competitive_alerts),
+            payer_alerts         = _build_payer(payer_alerts),
+            hcp_awareness_alerts = _build_hcp(hcp_awareness_alerts),
+        )
+    )
+
+
+def get_alert_summary(db: Session, territory_id: str) -> ActionCenterSummary:
+    """Separate endpoint — returns only the KPI summary tiles, no alert cards."""
+    alerts: List[AlertItem] = []
+    try:
+        ml_detected = detect_alerts(db_engine)
+        if ml_detected:
+            alerts = [_build_ml_alert_item(ml, enrich(ml)) for ml in ml_detected]
+    except Exception as e:
+        log.warning("ML pipeline failed in summary: %s", e)
+
+    if not alerts:
+        try:
+            rows = (
+                db.query(ActiveAlert)
+                .order_by(_SEVERITY_RANK, ActiveAlert.detected_at)
+                .all()
+            )
+            alerts = [_build_alert_item(r, enrich(r), _icd10_for_alert(db, r)) for r in rows]
+        except Exception as e:
+            log.warning("DB query failed in summary: %s", e)
+
+    critical       = sum(1 for a in alerts if a.ai_severity == "CRITICAL")
+    high           = sum(1 for a in alerts if a.ai_severity == "HIGH")
+    medium         = sum(1 for a in alerts if a.ai_severity == "MEDIUM")
+    drift          = sum(a.ai_affected_hcp_count for a in alerts if a.alert_type == "HCP_DRIFT")
+    unread         = len(alerts)
+    now_str        = datetime.now(timezone.utc).strftime("%b %d, %Y %I:%M %p")
+
+    # ai_early_detection_weeks — avg of ML-detected lead weeks, 0.0 if none
+    lead_weeks_vals = [
+        a.ai_detection_lead_weeks for a in alerts
+        if getattr(a, "ai_detection_lead_weeks", None) is not None
+    ]
+    early_detection = round(sum(lead_weeks_vals) / len(lead_weeks_vals), 1) if lead_weeks_vals else 0.0
+
+    return ActionCenterSummary(
         territory_id                = territory_id,
-        period                      = "Q1 2026 (Jan - Mar)",
+        period                      = "",
         last_refresh                = now_str,
         ai_critical_count           = critical,
         ai_high_priority_count      = high,
         ai_medium_priority_count    = medium,
         ai_hcp_drift_detected_count = drift,
-        ai_early_detection_weeks    = 2.8,
+        ai_early_detection_weeks    = early_detection,
         ai_new_unread_count         = unread,
-        ai_banner_message           = "Competitive script shifts detected in your territory" if critical > 0 else None,
-    )
-
-    return AlertListResponse(
-        summary     = summary,
-        alerts      = alerts,
-        total       = len(alerts),
-        total_in_db = total_in_db,
+        ai_banner_message           = "Competitive script shifts detected in your territory" if critical > 0 else "",
     )

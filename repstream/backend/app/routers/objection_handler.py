@@ -38,11 +38,6 @@ def _get_objection_list(db: Session, territory_id: str, period: Optional[str] = 
     rows = enrich_objection_list(rows)
     rows = sort_objections(rows)
 
-    # Build response highlight from response text
-    for obj in rows:
-        resp = obj.get("ai_mlr_response", "")
-        obj["ai_response_highlight"] = _extract_response_highlight(resp)
-
     cache_set(cache_key, rows, ttl=_CACHE_TTL)
     return rows
 
@@ -78,12 +73,9 @@ async def get_objection_response(
             ai_mlr_response=row.get("ai_mlr_response", ""),
             ai_response_source=row.get("response_source"),
             ai_sku=row.get("ai_sku"),
-            ai_success_rate=float(row.get("ai_success_rate", 0)),
             ai_conversion_score=row.get("ai_conversion_score", 0.0),
             ai_date_range=row.get("ai_date_range"),
             ai_supporting_materials=row.get("ai_supporting_materials"),
-            ai_response_highlight=row.get("ai_response_highlight"),
-            ai_is_optimized=row.get("ai_is_optimized", True),
             analysis_badges=row.get("analysis_badges", []),
         )
 
@@ -102,11 +94,8 @@ async def get_objection_response(
         ai_mlr_response=result["recommended_response"],
         ai_response_source=result.get("response_source"),
         ai_sku=result.get("sku"),
-        ai_success_rate=float(result.get("success_rate", 0)),
         ai_conversion_score=round(float(result.get("success_rate", 0)) * 100, 1),
         ai_supporting_materials=result.get("ai_supporting_materials"),
-        ai_response_highlight=_extract_response_highlight(result["recommended_response"]),
-        ai_is_optimized=True,
         analysis_badges=["DETECTED_BY_AI", "NLP_ANALYSIS", "AI_OPTIMIZED"],
     )
 

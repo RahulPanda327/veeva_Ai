@@ -14,16 +14,12 @@ class ObjectionItem(BaseModel):
     # ── AI output keys ────────────────────────────────────────────────────────
     ai_frequency_label: Literal["HIGH", "MEDIUM", "LOW"]
     ai_call_count: int
-    ai_date_range: Optional[str] = None               # "Mar 15 - Apr 22"
-    ai_success_rate: float = Field(ge=0.0, le=1.0)
-    ai_conversion_score: float = Field(default=0.0)   # 0-100
-    ai_mlr_response: Optional[str] = None             # response shown inline
+    ai_date_range: Optional[str] = None
+    ai_conversion_score: float = Field(default=0.0)
+    ai_mlr_response: Optional[str] = None
     ai_sku: Optional[str] = None
     ai_supporting_materials: Optional[str] = None
-    ai_detected_by_ai: bool = True
-    ai_is_optimized: bool = True
     analysis_badges: List[str] = Field(default_factory=list)
-    ai_response_highlight: Optional[str] = None
 
 
 class ObjectionResponse(BaseModel):
@@ -36,12 +32,9 @@ class ObjectionResponse(BaseModel):
     ai_mlr_response: str
     ai_response_source: Optional[str] = None
     ai_sku: Optional[str] = None
-    ai_success_rate: float
     ai_conversion_score: float = 0.0
     ai_date_range: Optional[str] = None
     ai_supporting_materials: Optional[str] = None
-    ai_response_highlight: Optional[str] = None
-    ai_is_optimized: bool = True
     analysis_badges: List[str] = Field(default_factory=list)
 
 

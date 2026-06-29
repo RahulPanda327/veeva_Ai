@@ -51,10 +51,13 @@ def _parse_objection_date(obj: Dict) -> datetime:
 
 
 def sort_objections(objections: List[Dict]) -> List[Dict]:
-    """Sort all objections by date descending (most recent first)."""
+    """Sort all objections: HIGH → MEDIUM → LOW, then by date descending within each group."""
     return sorted(
         objections,
-        key=lambda o: -_parse_objection_date(o).timestamp(),
+        key=lambda o: (
+            _FREQ_ORDER.get(o.get("ai_frequency_label", "LOW").upper(), 2),
+            -_parse_objection_date(o).timestamp(),
+        ),
     )
 
 
@@ -222,7 +225,7 @@ def load_all_objections(
                     "ai_call_count":         raw_count,
                     "ai_date_range":         r.detection_period or "",
                     "ai_success_rate":       raw_rate,
-                    "ai_frequency_label":    (r.frequency_label or _frequency_label(raw_count)).upper(),
+                    "ai_frequency_label":    (r.frequency_label or "").upper() or _frequency_label(raw_count),
                     "ai_mlr_response":       r.mlr_response or "",
                     "response_source":       "MLR-approved",
                     "ai_sku":                sku,
@@ -286,8 +289,6 @@ def get_best_mlr_response(db: Session, objection_id: str) -> Optional[Dict]:
 def enrich_objection_list(objections: List[Dict]) -> List[Dict]:
     """Add NLP analysis badges and conversion score to each objection."""
     for obj in objections:
-        obj["ai_detected_by_ai"] = True
-        obj["ai_is_optimized"]   = float(obj.get("ai_success_rate", 0)) > 0
-        obj["analysis_badges"]   = _nlp_badges(obj)
+        obj["analysis_badges"]     = _nlp_badges(obj)
         obj["ai_conversion_score"] = round(float(obj.get("ai_success_rate", 0)) * 100, 1)
     return objections

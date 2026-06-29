@@ -1,7 +1,7 @@
 """Pydantic v2 schemas for Action Center — Launch & Market Defense."""
 from __future__ import annotations
 
-from typing import Any, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -134,29 +134,68 @@ class ActionCenterSummary(BaseModel):
     ai_banner_message:   Optional[str]= Field(default=None, description="Yellow banner message text. Null if no critical alerts", examples=["Competitive script shifts detected in your territory"])
 
 
-class AlertListResponse(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": {
-        "total":       8,
-        "total_in_db": 12,
-        "summary": {
-            "territory_id":                "A0E000000013007",
-            "period":                      "Q1 2026 (Jan - Mar)",
-            "last_refresh":                "Jun 24, 2026 10:30 AM",
-            "ai_critical_count":           3,
-            "ai_high_priority_count":      3,
-            "ai_medium_priority_count":    2,
-            "ai_hcp_drift_detected_count": 12,
-            "ai_early_detection_weeks":    2.8,
-            "ai_new_unread_count":         8,
-            "ai_banner_message":           "Competitive script shifts detected in your territory"
-        },
-        "alerts": ["... see AlertItem schema below ..."]
-    }})
+class CompetitiveAlertItem(BaseModel):
+    alert_id:                 str
+    ai_severity:              Literal["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+    ai_detection_method:      Literal["ANOMALY_DETECTION", "AUTO_DETECTED", "ML_MODEL"]
+    detected_at:              str
+    title:                    str
+    description:              str
+    ai_affected_hcp_count:    int                  = 0
+    ai_territory_reach:       Optional[str]        = None
+    ai_rx_risk:               Optional[str]        = None
+    ai_icd10_codes_affected:  List[ICD10Affected]  = []
+    ai_prescribing_drift_note: Optional[str]       = None
+    ai_counter_script:        Optional[str]        = None
+    ai_supporting_materials:  List[SupportingMaterial] = []
+    recommended_actions:      List[str]            = []
 
-    summary:      ActionCenterSummary = Field(description="KPI summary tiles + banner data for the top section")
-    alerts:       List[AlertItem]     = Field(description="List of alert cards. featured=false returns all, featured=true returns max 3 (1 per severity)")
-    total:        int                 = Field(description="Number of alerts returned in this response (affected by featured flag)", examples=[8, 3])
-    total_in_db:  int                 = Field(default=0, description="Actual total rows in insight360_active_alerts table regardless of ML/featured/fallback path", examples=[12])
+
+class HCPAlertItem(BaseModel):
+    alert_id:             str
+    ai_severity:          Literal["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+    ai_detection_method:  Literal["ANOMALY_DETECTION", "AUTO_DETECTED", "ML_MODEL"]
+    detected_at:          str
+    title:                str
+    description:          str
+    recommended_actions:  List[str] = []
+
+
+class PayerAlertItem(BaseModel):
+    alert_id:                 str
+    ai_severity:              Literal["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+    ai_detection_method:      Literal["ANOMALY_DETECTION", "AUTO_DETECTED", "ML_MODEL"]
+    detected_at:              str
+    title:                    str
+    description:              str
+    ai_affected_hcp_count:    int           = 0
+    ai_territory_reach:       Optional[str] = None   # shows as "Covered Lives" for payer
+    ai_rx_risk:               Optional[str] = None   # shows as "Access Impact" for payer
+    ai_prescribing_drift_note: Optional[str] = None
+    recommended_actions:      List[str]     = []
+
+
+class AlertGroups(BaseModel):
+    competitive:   List[CompetitiveAlertItem] = Field(default=[], description="All COMPETITIVE alert cards")
+    payer:         List[PayerAlertItem]       = Field(default=[], description="All PAYER alert cards")
+    hcp_awareness: List[HCPAlertItem]         = Field(default=[], description="All HCP_DRIFT / awareness alert cards")
+
+
+class AlertListResponse(BaseModel):
+    summary:     ActionCenterSummary = Field(description="KPI summary tiles + banner data for the top section")
+    alerts:      AlertGroups         = Field(description="Alerts grouped by module type")
+    total:       int                 = Field(description="Total alerts returned across all groups", examples=[8])
+    total_in_db: int                 = Field(default=0, description="Actual row count in insight360_active_alerts", examples=[8])
+
+
+class ActiveAlertSection(BaseModel):
+    competitive_alerts:   List[Dict[str, Any]] = []
+    payer_alerts:         List[Dict[str, Any]] = []
+    hcp_awareness_alerts: List[Dict[str, Any]] = []
+
+
+class ActiveAlertListResponse(BaseModel):
+    active_alerts: ActiveAlertSection
 
 
 # ──────────────────────────────────────────────────
