@@ -164,26 +164,19 @@ def _frequency_label(call_count: int) -> FrequencyLabel:
     return "LOW"
 
 
-def _sku_to_materials(sku: Optional[str], objection_type: Optional[str]) -> Optional[str]:
-    """Generate supporting materials description from SKU or objection type."""
+def _combine_materials(mlr_response: Optional[str], sku: Optional[str]) -> Optional[str]:
+    """ai_supporting_materials = the real MLR response + its SKU, combined.
+    Both values come straight from insight360_objection_handler
+    (MLR_Approved_Response + MLR_SKU_Code) — no hardcoded material names."""
+    response = (mlr_response or "").strip()
+    sku = (sku or "").strip()
+    if response and sku:
+        return f"{response} (SKU: {sku})"
+    if response:
+        return response
     if sku:
-        return f"Supporting material (SKU: {sku})"
-    if not objection_type:
-        return None
-    mapping = {
-        "side effect": "Safety Profile Summary, Phase 3 Results Card",
-        "dosing":      "Dosing Guide, Patient Education Kit",
-        "coverage":    "Copay Card, Prior Auth Support Guide",
-        "insurance":   "Copay Card, Reimbursement Guide",
-        "efficacy":    "Clinical Summary, Phase 3 Study Card",
-        "cost":        "Patient Assistance Program Guide",
-        "competitor":  "Competitive Intelligence Dossier",
-    }
-    lower = objection_type.lower()
-    for key, materials in mapping.items():
-        if key in lower:
-            return materials
-    return "MLR-approved response card"
+        return f"SKU: {sku}"
+    return None
 
 
 def _nlp_badges(row: Dict) -> List[str]:
@@ -229,7 +222,7 @@ def load_all_objections(
                     "ai_mlr_response":       r.mlr_response or "",
                     "response_source":       "MLR-approved",
                     "ai_sku":                sku,
-                    "ai_supporting_materials": _sku_to_materials(sku, obj_type),
+                    "ai_supporting_materials": _combine_materials(r.mlr_response, sku),
                 })
             log.info("Loaded %d objections from DB.", len(result))
             return result
@@ -264,7 +257,7 @@ def get_best_mlr_response(db: Session, objection_id: str) -> Optional[Dict]:
                 "sku":                   sku,
                 "success_rate":          raw_rate,
                 "hcp_segment":           None,
-                "ai_supporting_materials": _sku_to_materials(sku, row.objection_category),
+                "ai_supporting_materials": _combine_materials(row.mlr_response, sku),
             }
     except Exception as exc:
         log.warning("MLR response DB lookup failed (%s).", exc)

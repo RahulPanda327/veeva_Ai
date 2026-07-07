@@ -113,6 +113,153 @@ def _last_rx_date_for(hcp_id: str, ref_date: date) -> Optional[str]:
 # Real DB loaders (raw SQL, confirmed column names from alert_detector)
 # ─────────────────────────────────────────────────────────────────────────────
 
+_PROFILE_COLUMNS = """
+    b.Is_AMA_Do_Not_Contact     AS is_ama_do_not_contact,
+    b.Email_1                   AS email,
+    b.HCP_Status_Description    AS hcp_status,
+    b.HCP_Type_Description      AS hcp_type,
+    b.Medical_Degree_1          AS medical_degree,
+    b.NPI_int                   AS npi,
+    b.PDRP_Optout                AS pdrp_output,
+    b.Url_1                      AS website,
+    b.Target                     AS target,
+    b.City                       AS city,
+    b.address                    AS address,
+    b.State_Province             AS state
+"""
+
+_HCP_PRIORITY_SQL = text(f"""
+    WITH rx_agg AS (
+        SELECT
+            s.HCP_Durable_Id,
+            SUM(CASE WHEN YEAR(TRY_CAST(s.Month_Ending_Date AS DATE)) = :yr1
+                      AND DATEPART(QUARTER, TRY_CAST(s.Month_Ending_Date AS DATE)) = :q1
+                 THEN ISNULL(TRY_CAST(s.Total_Rx_Quantity AS FLOAT), 0) ELSE 0 END) AS total_rx_q1,
+            SUM(CASE WHEN YEAR(TRY_CAST(s.Month_Ending_Date AS DATE)) = :yr4
+                      AND DATEPART(QUARTER, TRY_CAST(s.Month_Ending_Date AS DATE)) = :q4
+                 THEN ISNULL(TRY_CAST(s.Total_Rx_Quantity AS FLOAT), 0) ELSE 0 END) AS total_rx_q4,
+            MAX(CASE WHEN ISNULL(TRY_CAST(s.Total_Rx_Quantity AS FLOAT), 0) > 0
+                 THEN TRY_CAST(s.Month_Ending_Date AS DATE) END) AS last_rx_date
+        FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting s
+        WHERE s.sf_terr_pk_gi = :terr
+        GROUP BY s.HCP_Durable_Id
+    ),
+    target_ranked AS (
+        SELECT
+            d.HCP_Durable_Id,
+            d.Segment,
+            d.Decile,
+            ROW_NUMBER() OVER (PARTITION BY d.HCP_Durable_Id ORDER BY TRY_CAST(d.End_Date AS DATE) DESC) AS rn
+        FROM hub_insight360.vw_tfact_target_plan_reporting d
+    )
+    SELECT TOP 500
+        b.HCP_Durable_Id            AS hcp_id,
+        b.Formatted_Name            AS name,
+        b.Specialty_Description     AS specialty,
+        a.Re_Engagement_Priority    AS priority,
+        r.last_rx_date              AS last_rx_date,
+        r.total_rx_q1               AS rx_q1,
+        r.total_rx_q4               AS rx_q4,
+        t.Segment                   AS segment,
+        TRY_CAST(t.Decile AS INT)   AS decile_rank,
+        {_PROFILE_COLUMNS}
+    FROM rx_agg r
+    JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting b
+      ON b.HCP_Durable_Id = r.HCP_Durable_Id
+    LEFT JOIN hub_insight360.insight360_hcp_awareness a
+      ON a.HCP_Durable_Id = r.HCP_Durable_Id
+    LEFT JOIN target_ranked t
+      ON t.HCP_Durable_Id = r.HCP_Durable_Id AND t.rn = 1
+""")
+
+
+def _latest_quarter_with_rx_data(engine) -> Optional[Tuple[int, int]]:
+    """Rx data always lags behind the calendar. If the requested (year, quarter)
+    has no rows yet, callers should retry with the most recent quarter that does."""
+    try:
+        df = pd.read_sql(
+            text("""
+                SELECT MAX(TRY_CAST(Month_Ending_Date AS DATE)) AS max_dt
+                FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting
+            """),
+            engine,
+        )
+        max_dt = df["max_dt"].iloc[0]
+        if max_dt is None:
+            return None
+        return (max_dt.year, (max_dt.month - 1) // 3 + 1)
+    except Exception as exc:
+        log.warning("Could not determine latest available Rx quarter (%s).", exc)
+        return None
+
+
+def load_hcp_priority_data(
+    db: Session,
+    territory_id: str,
+    year_q1: int,
+    quarter_q1: int,
+    year_q4: int,
+    quarter_q4: int,
+) -> Optional[List[dict]]:
+    """Base query for Territory Prioritization: HCP identity + awareness priority +
+    per-quarter Rx totals + target-plan segment, one row per HCP (pre-aggregated
+    before joining to avoid the Rx-fact x target-plan row explosion).
+    Returns None on any error or empty result.
+    """
+    try:
+        engine = db.bind
+
+        latest = _latest_quarter_with_rx_data(engine)
+        if latest and latest != (year_q1, quarter_q1):
+            log.info(
+                "Requested quarter %d-Q%d has no Rx data yet, using latest available %d-Q%d instead.",
+                year_q1, quarter_q1, latest[0], latest[1],
+            )
+            year_q1, quarter_q1 = latest
+            # prior quarter relative to the substituted "current" quarter
+            if quarter_q1 == 1:
+                year_q4, quarter_q4 = year_q1 - 1, 4
+            else:
+                year_q4, quarter_q4 = year_q1, quarter_q1 - 1
+
+        df = pd.read_sql(
+            _HCP_PRIORITY_SQL,
+            engine,
+            params={"terr": territory_id, "yr1": year_q1, "q1": quarter_q1, "yr4": year_q4, "q4": quarter_q4},
+        )
+        if df.empty:
+            return None
+        df = df.astype(object).where(df.notna(), None)  # NaN -> None so it serializes as JSON null
+        df["territory_id"] = territory_id
+        df["affiliated_hospital"] = None  # no such column on the HCP dimension view
+        return df.to_dict("records")
+    except Exception as exc:
+        log.warning("HCP priority data load failed (%s), using fallback.", exc)
+        return None
+
+
+def get_hcp_profile(db: Session, hcp_id: str) -> Optional[dict]:
+    """View Profile fields for a single HCP, straight from the HCP dimension view."""
+    try:
+        engine = db.bind
+        sql = text(f"""
+            SELECT
+                b.HCP_Durable_Id            AS hcp_id,
+                b.Formatted_Name            AS formatted_name,
+                b.Specialty_Description     AS specialist_description,
+                {_PROFILE_COLUMNS.replace('is_ama_do_not_contact', 'is_ama_do_not_contact').strip()}
+            FROM hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting b
+            WHERE b.HCP_Durable_Id = :hcp_id
+        """)
+        df = pd.read_sql(sql, engine, params={"hcp_id": hcp_id})
+        if df.empty:
+            return None
+        return df.to_dict("records")[0]
+    except Exception as exc:
+        log.warning("HCP profile load failed (%s).", exc)
+        return None
+
+
 def _load_hcps_from_db(db: Session, territory_id: str) -> Optional[List[dict]]:
     """Try loading HCPs from real DB. Returns None on any error."""
     try:
@@ -120,21 +267,19 @@ def _load_hcps_from_db(db: Session, territory_id: str) -> Optional[List[dict]]:
         sql = text("""
             SELECT TOP 500
                 HCP_Durable_Id       AS hcp_id,
-                HCP_Full_Name        AS name,
-                Specialty            AS specialty,
-                Affiliated_Hospital  AS affiliated_hospital,
-                sf_terr_pk_gi        AS territory_id,
-                HCP_Segment          AS segment,
+                Formatted_Name        AS name,
+                Specialty_Description AS specialty,
+                Segment_Description   AS segment,
                 City                 AS city,
-                State                AS state,
+                State_Province       AS state,
                 Decile               AS decile_rank
             FROM hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting
-            WHERE sf_terr_pk_gi = :terr
-              AND Is_Active = 1
         """)
-        df = pd.read_sql(sql, engine, params={"terr": territory_id})
+        df = pd.read_sql(sql, engine)
         if df.empty:
             return None
+        df["affiliated_hospital"] = None
+        df["territory_id"] = territory_id
         return df.to_dict("records")
     except Exception as exc:
         log.warning("HCP dim load failed (%s), using fallback.", exc)
@@ -218,7 +363,8 @@ def load_territory_data(db: Session, territory_id: str, ref_date: date) -> dict:
     Load all data needed for territory prioritization.
     Returns a dict with keys: hcps, rx_pivot_df, call_stats, using_fallback.
     """
-    hcps        = _load_hcps_from_db(db, territory_id)
+    (yr1, q1), (yr4, q4) = get_current_and_prior_quarter(ref_date)
+    hcps        = load_hcp_priority_data(db, territory_id, yr1, q1, yr4, q4)
     rx_pivot_df = _load_rx_pivot_from_db(db, territory_id)
     call_stats  = _load_calls_from_db(db, territory_id, ref_date)
     using_fallback = False

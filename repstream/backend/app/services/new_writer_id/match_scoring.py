@@ -22,10 +22,12 @@ def enrich_with_peer_match(
             candidate["peer_match_pct"] = round(best["match_score"], 1)
             candidate["peer_name"] = best["peer_hcp_name"]
             candidate["peer_hcp_id"] = best["peer_hcp_id"]
+            candidate["match_rationale"] = best["match_rationale"]
         else:
             candidate["peer_match_pct"] = 0.0
             candidate["peer_name"] = None
             candidate["peer_hcp_id"] = None
+            candidate["match_rationale"] = None
 
     # Sort by peer_match_pct descending, then by in_class_rx_q1 descending
     return sorted(

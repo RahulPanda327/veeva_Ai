@@ -49,7 +49,7 @@ def _parse_detected_at(val: str) -> datetime:
             continue
     return datetime.min
 
-from sqlalchemy import case
+from sqlalchemy import case, text
 from sqlalchemy.orm import Session
 
 log = logging.getLogger(__name__)
@@ -631,6 +631,113 @@ def _payer_alerts_from_db(db: Session) -> List[AlertItem]:
         return None
 
 
+def _affected_hcps_by_alert(db: Session) -> Dict[str, List[dict]]:
+    """Alert_Id → affected HCP details.
+
+    insight360_active_alerts_details is the alert→HCP bridge table
+    (Alert_Id, HCP_Durable_Id); joined to the HCP dimension view for details.
+    One query for all alerts, grouped in Python (only ~60 bridge rows).
+    """
+    try:
+        sql = text("""
+            SELECT
+                b.Alert_Id              AS alert_id,
+                b.HCP_Durable_Id        AS hcp_id,
+                c.Formatted_Name        AS name,
+                c.Specialty_Description AS specialty,
+                c.Segment_Description   AS segment,
+                c.City                  AS city,
+                c.State_Province        AS state
+            FROM hub_insight360.insight360_active_alerts_details b
+            INNER JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting c
+                ON b.HCP_Durable_Id = c.HCP_Durable_Id
+        """)
+        result: Dict[str, List[dict]] = {}
+        for row in db.execute(sql).mappings():
+            r = dict(row)
+            result.setdefault(r.pop("alert_id"), []).append(r)
+        return result
+    except Exception as exc:
+        log.warning("Affected HCP lookup failed (%s).", exc)
+        return {}
+
+
+def _deploy_reps_by_alert(db: Session) -> Dict[str, List[dict]]:
+    """Alert_Id → field reps to deploy the alert to, with their affected HCPs.
+
+    Chain: insight360_active_alerts_details (alert→HCP)
+         → vw_account_territory_zenpep_reporting (HCP→territory, Commercial_Sales_Field_Force)
+         → vw_tdim_employee_zenpep_reporting (territory→rep).
+    One query for all alerts, grouped per alert per rep in Python.
+    """
+    try:
+        sql = text("""
+            SELECT
+                d.Alert_Id               AS alert_id,
+                c.Formatted_Name         AS hcp_name,
+                at2.Territory_Durable_Id AS territory_id,
+                e.Name                   AS rep_name,
+                e.Email                  AS rep_email
+            FROM hub_insight360.insight360_active_alerts_details d
+            JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting c
+              ON c.HCP_Durable_Id = d.HCP_Durable_Id
+            LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting at2
+              ON at2.HCP_Durable_Id = d.HCP_Durable_Id
+             AND at2.sales_force = 'Commercial_Sales_Field_Force'
+            LEFT JOIN hub_insight360.vw_tdim_employee_zenpep_reporting e
+              ON e.Territory_Durable_Id = at2.Territory_Durable_Id
+        """)
+        grouped: Dict[str, Dict[tuple, dict]] = {}
+        for row in db.execute(sql).mappings():
+            if not row["rep_name"]:
+                continue   # HCP has no assigned rep in this sales force — nothing to deploy to
+            reps = grouped.setdefault(row["alert_id"], {})
+            key  = (row["rep_name"], row["rep_email"], row["territory_id"])
+            entry = reps.setdefault(key, {
+                "rep_name":      row["rep_name"].strip(),
+                "rep_email":     row["rep_email"],
+                "territory_id":  row["territory_id"],
+                "affected_hcps": [],
+            })
+            hcp_name = (row["hcp_name"] or "").strip()
+            if hcp_name and hcp_name not in entry["affected_hcps"]:
+                entry["affected_hcps"].append(hcp_name)
+        return {aid: list(reps.values()) for aid, reps in grouped.items()}
+    except Exception as exc:
+        log.warning("Deploy-to-field rep lookup failed (%s).", exc)
+        return {}
+
+
+def _affected_hcps_by_plan(db: Session) -> Dict[str, List[dict]]:
+    """Plan_Durable_Id → affected HCP details.
+
+    insight360_payer_access_details is the payer-plan→HCP bridge table
+    (Plan_Durable_Id, HCP_Durable_Id); joined to the HCP dimension view.
+    """
+    try:
+        sql = text("""
+            SELECT
+                b.Plan_Durable_Id       AS plan_id,
+                b.HCP_Durable_Id        AS hcp_id,
+                c.Formatted_Name        AS name,
+                c.Specialty_Description AS specialty,
+                c.Segment_Description   AS segment,
+                c.City                  AS city,
+                c.State_Province        AS state
+            FROM hub_insight360.insight360_payer_access_details b
+            INNER JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting c
+                ON b.HCP_Durable_Id = c.HCP_Durable_Id
+        """)
+        result: Dict[str, List[dict]] = {}
+        for row in db.execute(sql).mappings():
+            r = dict(row)
+            result.setdefault(r.pop("plan_id"), []).append(r)
+        return result
+    except Exception as exc:
+        log.warning("Payer affected HCP lookup failed (%s).", exc)
+        return {}
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertListResponse:
@@ -641,29 +748,43 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
     except Exception as e:
         log.warning("Could not count DB alerts: %s", e)
 
-    # ── STEP 1: Try ML pipeline (IsolationForest + LinearRegression) ──────────
-    ml_detected: List[DetectedAlert] = []
-    try:
-        ml_detected = detect_alerts(db_engine)
-    except Exception as e:
-        log.warning("ML pipeline failed, falling back to DB alerts: %s", e)
+    # Alert_Id → affected HCP details (insight360_active_alerts_details bridge).
+    # Built up-front: also fed into the GPT-4o enricher so each alert's language
+    # is grounded in its own HCPs' specialties/segments/locations.
+    affected_hcp_map = _affected_hcps_by_alert(db)
 
-    if ml_detected:
-        log.info("Using %d ML-detected alerts", len(ml_detected))
-        alerts = [_build_ml_alert_item(ml, enrich(ml)) for ml in ml_detected]
-    else:
-        # ── STEP 2: Fall back to pre-computed DB alerts ───────────────────────
-        log.info("No ML alerts — reading from DB")
-        rows: List[ActiveAlert] = []
-        try:
-            rows = (
-                db.query(ActiveAlert)
-                .order_by(_SEVERITY_RANK, ActiveAlert.detected_at)
-                .all()
+    # ── STEP 1: Pre-computed DB alerts (insight360_active_alerts) — primary.
+    # Their Alert_Ids (AL-xxx) are what insight360_active_alerts_details maps
+    # to HCPs, powering view_affected_hcp. ML detection is fallback only.
+    rows: List[ActiveAlert] = []
+    try:
+        rows = (
+            db.query(ActiveAlert)
+            .order_by(_SEVERITY_RANK, ActiveAlert.detected_at)
+            .all()
+        )
+    except Exception as e:
+        log.warning("DB query for alerts failed (%s), trying ML pipeline", e)
+
+    if rows:
+        log.info("Using %d DB alerts", len(rows))
+        alerts = [
+            _build_alert_item(
+                r,
+                enrich(r, affected_hcp_map.get(r.alert_id, [])),
+                _icd10_for_alert(db, r),
             )
+            for r in rows
+        ]
+    else:
+        # ── STEP 2: Fall back to ML pipeline (IsolationForest + LinearRegression)
+        log.info("No DB alerts — running ML detection")
+        ml_detected: List[DetectedAlert] = []
+        try:
+            ml_detected = detect_alerts(db_engine)
         except Exception as e:
-            log.warning("DB query for alerts failed (%s), will use sample data", e)
-        alerts = [_build_alert_item(r, enrich(r), _icd10_for_alert(db, r)) for r in rows]
+            log.warning("ML pipeline failed: %s", e)
+        alerts = [_build_ml_alert_item(ml, enrich(ml)) for ml in ml_detected]
 
     # No data → return empty sections
     if not alerts:
@@ -756,6 +877,19 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
         hcp_awareness_alerts = hcp_awareness_alerts[:1]
         payer_alerts         = payer_alerts[:1]
 
+    # Plan_Durable_Id → affected HCP details (insight360_payer_access_details bridge)
+    plan_hcp_map = _affected_hcps_by_plan(db)
+    # Alert_Id → reps to deploy to (HCP → territory → rep chain)
+    deploy_map = _deploy_reps_by_alert(db)
+
+    def _payer_hcps(alert_id: str) -> List[dict]:
+        """Payer alerts come from two sources with different id shapes:
+        'PAYER-{plan_id}' (from insight360_payer_access) → plan bridge;
+        'AL-xxx' (payer-classified insight360_active_alerts) → alerts bridge."""
+        if alert_id.startswith("PAYER-"):
+            return plan_hcp_map.get(alert_id[len("PAYER-"):], [])
+        return affected_hcp_map.get(alert_id, [])
+
     # Build 3 sectioned lists, each numbered independently from alert_1
     def _build_competitive(items):
         return [
@@ -775,6 +909,8 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
                 "ai_counter_script":        a.ai_counter_script,
                 "ai_supporting_materials":  [m.model_dump() for m in a.ai_supporting_materials],
                 "recommended_actions":      a.recommended_actions,
+                "view_affected_hcp":        affected_hcp_map.get(a.alert_id, []),
+                "deploy_to_field":          deploy_map.get(a.alert_id, []),
             }}
             for i, a in enumerate(items)
         ]
@@ -794,6 +930,7 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
                 "ai_rx_risk":               a.ai_rx_risk,
                 "ai_prescribing_drift_note": a.ai_prescribing_drift_note,
                 "recommended_actions":      a.recommended_actions,
+                "view_hcp_list":            [{"name": h["name"].strip()} for h in _payer_hcps(a.alert_id)],
             }}
             for i, a in enumerate(items)
         ]
@@ -825,24 +962,33 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
 
 def get_alert_summary(db: Session, territory_id: str) -> ActionCenterSummary:
     """Separate endpoint — returns only the KPI summary tiles, no alert cards."""
+    # DB alerts primary, ML fallback — must match get_alerts so KPIs agree with the list
     alerts: List[AlertItem] = []
     try:
-        ml_detected = detect_alerts(db_engine)
-        if ml_detected:
-            alerts = [_build_ml_alert_item(ml, enrich(ml)) for ml in ml_detected]
+        affected_hcp_map = _affected_hcps_by_alert(db)
+        rows = (
+            db.query(ActiveAlert)
+            .order_by(_SEVERITY_RANK, ActiveAlert.detected_at)
+            .all()
+        )
+        alerts = [
+            _build_alert_item(
+                r,
+                enrich(r, affected_hcp_map.get(r.alert_id, [])),
+                _icd10_for_alert(db, r),
+            )
+            for r in rows
+        ]
     except Exception as e:
-        log.warning("ML pipeline failed in summary: %s", e)
+        log.warning("DB query failed in summary: %s", e)
 
     if not alerts:
         try:
-            rows = (
-                db.query(ActiveAlert)
-                .order_by(_SEVERITY_RANK, ActiveAlert.detected_at)
-                .all()
-            )
-            alerts = [_build_alert_item(r, enrich(r), _icd10_for_alert(db, r)) for r in rows]
+            ml_detected = detect_alerts(db_engine)
+            if ml_detected:
+                alerts = [_build_ml_alert_item(ml, enrich(ml)) for ml in ml_detected]
         except Exception as e:
-            log.warning("DB query failed in summary: %s", e)
+            log.warning("ML pipeline failed in summary: %s", e)
 
     critical       = sum(1 for a in alerts if a.ai_severity == "CRITICAL")
     high           = sum(1 for a in alerts if a.ai_severity == "HIGH")

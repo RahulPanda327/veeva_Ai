@@ -125,6 +125,21 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_peer_match (
     updated_at         TIMESTAMP DEFAULT NOW()
 );
 
+-- New Writer ID (enriched card — 11 keys rendered on the module UI)
+CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_new_writer_id (
+    hcp_id                 VARCHAR(50) PRIMARY KEY,
+    name                   VARCHAR(200),
+    specialty              VARCHAR(100),
+    affiliated_hospital    VARCHAR(200),
+    last_nrx_date          VARCHAR(50),
+    ai_warm_approach_text  TEXT,
+    ai_icd10_matched_codes VARCHAR(500),
+    top_5_in_class_rx      TEXT,
+    total_in_class_rx      FLOAT DEFAULT 0,
+    ai_peer_match_score    FLOAT DEFAULT 0,
+    analysis_badges        VARCHAR(200)
+);
+
 -- Objection Handler (enriched)
 CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_objection_handler (
     objection_id         VARCHAR(80) PRIMARY KEY,
@@ -439,6 +454,39 @@ def seed_peer_matches():
         ("PM-003", "HCP008", "HCP001", "Dr. Jane Smith", 45.0,
          "EPI patient population overlap despite different specialty",
          "Gastroenterology", "", 45.0, "TERR-001"),
+    ]
+
+
+def seed_new_writer_cards():
+    """New Writer ID card data — matches the UI screenshot exactly (11 keys only)."""
+    import json
+    return [
+        (
+            "NW001", "Dr. Jennifer Lee", "Endocrinology", "Summit Medical", "Feb 12, 2026",
+            "Connected to Dr. Davidson. Prescribing competitor in same class at 8-12% conversion rate.",
+            "E11.9|E78.5",
+            json.dumps([
+                {"brand": "Competitor Brand A", "rx": 14},
+                {"brand": "Competitor Brand B", "rx": 9},
+                {"brand": "Generic Option C", "rx": 6},
+                {"brand": "Competitor Brand D", "rx": 4},
+                {"brand": "Competitor Brand E", "rx": 2},
+            ]),
+            35.0, 87.0, "ML_PATTERN_MATCHING|AI_MATCHED|AI_GENERATED",
+        ),
+        (
+            "NW002", "Dr. Robert Kim", "Cardiology", "Riverside Heart", "Mar 8, 2026",
+            "Peer network indicates 25-35% conversion opportunity. Recently joined practice on Feb 15, 2026.",
+            "I50.9|I25.10",
+            json.dumps([
+                {"brand": "Competitor Brand B", "rx": 11},
+                {"brand": "Generic Option C", "rx": 8},
+                {"brand": "Competitor Brand A", "rx": 5},
+                {"brand": "Competitor Brand F", "rx": 3},
+                {"brand": "Competitor Brand D", "rx": 1},
+            ]),
+            28.0, 72.0, "ML_PATTERN_MATCHING|AI_MATCHED|AI_GENERATED",
+        ),
     ]
 
 
@@ -894,6 +942,7 @@ def run():
             "insight360_active_alerts",
             "insight360_call_transcripts",
             "insight360_objection_handler",
+            "insight360_new_writer_id",
             "insight360_peer_match",
             "vw_tfact_callactivitydetails_zenpep_reporting",
             "vw_tfact_prescribersales_zenpep_reporting",
@@ -954,6 +1003,16 @@ def run():
                  match_rationale,shared_specialty,shared_institution,peer_brand_rx_q1,territory_id)
                 VALUES (:a,:b,:c,:d,:e,:f,:g,:h,:i,:j)
             """), dict(zip("abcdefghij", r)))
+
+        print("Seeding new writer ID cards…")
+        for r in seed_new_writer_cards():
+            conn.execute(text(f"""
+                INSERT INTO {SCHEMA}.insight360_new_writer_id
+                (hcp_id, name, specialty, affiliated_hospital, last_nrx_date,
+                 ai_warm_approach_text, ai_icd10_matched_codes, top_5_in_class_rx,
+                 total_in_class_rx, ai_peer_match_score, analysis_badges)
+                VALUES (:a,:b,:c,:d,:e,:f,:g,:h,:i,:j,:k)
+            """), dict(zip("abcdefghijk", r)))
 
         print("Seeding objection handler…")
         for r in seed_objections():

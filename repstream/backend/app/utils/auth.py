@@ -52,7 +52,7 @@ def decode_token(token: str) -> RepIdentity:
 
 _DEV_IDENTITY = RepIdentity(
     rep_id="REP001",
-    territory_id="TERR-001",
+    territory_id="Commercial_Sales_Field_Force|A0E000000013008",  # real territory ID verified against live Synapse
     email="rahulpandarp1998@gmail.com",
     full_name="Demo Rep",
     role="rep",

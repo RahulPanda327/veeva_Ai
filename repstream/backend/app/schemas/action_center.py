@@ -306,8 +306,8 @@ class PayerAccessItem(BaseModel):
     ai_action_plan: Union[str, List[str]] = []       # List[str] when AI-flagged, str when DB fallback
     ai_pa_bridge_note: Optional[str] = None         # PA bridge language (if PA required)
 
-    # DB recommended action
-    recommended_action: Optional[str] = None
+    # "View Action Plan" — insight360_payer_access.Recommended_Action
+    view_action_plan: Optional[str] = None
 
     # Badges
     analysis_badges: List[str] = []

@@ -403,7 +403,7 @@ def _build_item(row: PayerAccess) -> PayerAccessItem:
         ai_impact_summary=gpt.get("ai_impact_summary"),
         ai_action_plan=gpt.get("ai_action_plan") if ai_alert else (row.recommended_action or ""),
         ai_pa_bridge_note=gpt.get("ai_pa_bridge_note") or None,
-        recommended_action=row.recommended_action,
+        view_action_plan=row.recommended_action,   # insight360_payer_access.Recommended_Action
         analysis_badges=badges,
         ai_is_flagged=ai_alert,
     )

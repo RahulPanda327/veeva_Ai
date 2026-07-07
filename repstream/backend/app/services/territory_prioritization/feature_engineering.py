@@ -52,8 +52,11 @@ def build_hcp_features(
             return getattr(hcp, key, default)
 
         rx = rx_data.get(hcp_id, {})
-        rx_q1 = rx.get("rx_q1", 0.0)
-        rx_q4 = rx.get("rx_q4", 0.0)
+        # Prefer the authoritative per-quarter totals from load_hcp_priority_data
+        # (real Total_Rx_Quantity, KPI-verified) when present on the HCP record itself;
+        # fall back to the rx_pivot/sample-derived rx_data dict otherwise.
+        rx_q1 = _get("rx_q1") if _get("rx_q1") is not None else rx.get("rx_q1", 0.0)
+        rx_q4 = _get("rx_q4") if _get("rx_q4") is not None else rx.get("rx_q4", 0.0)
         competitor_rx = rx.get("competitor_rx", 0.0)
 
         # Monthly Rx history for LinearRegression
@@ -62,9 +65,11 @@ def build_hcp_features(
         else:
             monthly_history = []   # will be populated from rx_pivot_df in ai_score
 
-        # Last Rx date: most recent non-zero month
-        last_rx_date_str = None
-        if monthly_history:
+        # Last Rx date: prefer the real DB value (load_hcp_priority_data) over the
+        # sample-derived monthly history estimate
+        db_last_rx = _get("last_rx_date")
+        last_rx_date_str = db_last_rx.strftime("%b %d, %Y") if db_last_rx is not None else None
+        if last_rx_date_str is None and monthly_history:
             for i in range(len(monthly_history) - 1, -1, -1):
                 if monthly_history[i] > 0:
                     months_back = len(monthly_history) - 1 - i
@@ -82,9 +87,26 @@ def build_hcp_features(
             "affiliated_hospital":  _get("affiliated_hospital"),
             "territory_id":         _get("territory_id"),
             "segment":              _get("segment") or _get("hcp_segment"),
+            "ai_awareness_priority": _get("priority"),
             "city":                 _get("city"),
             "state":                _get("state"),
             "decile_rank":          _get("decile_rank"),
+            "view_profile": {
+                "formatted_name":         _get("name"),
+                "specialist_description": _get("specialty"),
+                "is_ama_do_not_contact":  _get("is_ama_do_not_contact"),
+                "email":                  _get("email"),
+                "hcp_status":             _get("hcp_status"),
+                "hcp_type":               _get("hcp_type"),
+                "medical_degree":         _get("medical_degree"),
+                "npi":                    _get("npi"),
+                "pdrp_output":            _get("pdrp_output"),
+                "website":                _get("website"),
+                "target":                 _get("target"),
+                "city":                   _get("city"),
+                "address":                _get("address"),
+                "state":                  _get("state"),
+            },
             "rx_q1":                rx_q1,
             "rx_q4":                rx_q4,
             "rx_trend_pct":         compute_rx_trend(rx_q1, rx_q4),

@@ -1,5 +1,6 @@
 """Module 1 — Territory Prioritization API endpoints."""
 import logging
+import threading
 from datetime import date, datetime, timezone
 from typing import List
 
@@ -14,11 +15,14 @@ from app.services.territory_prioritization.data_ingestion import (
     load_territory_data,
     load_call_stats_90d,
     load_rx_for_territory,
+    get_hcp_profile,
 )
 from app.services.territory_prioritization.feature_engineering import build_hcp_features
 from app.services.territory_prioritization.llm_insight import (
+    count_uncached_insights,
     generate_insights_for_list,
     regenerate_single_hcp_insight,
+    warm_insights,
 )
 from app.services.territory_prioritization.weekly_target import build_territory_summary
 from app.utils.auth import RepIdentity, get_current_rep
@@ -28,6 +32,33 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/territory", tags=["Territory Prioritization"])
 
 _CACHE_TTL = 3600
+
+# Background GPT-4o insight warmer — dedup so one territory doesn't get multiple
+# concurrent warmers, and the request path never blocks on the LLM.
+_warming_territories: set[str] = set()
+_warm_lock = threading.Lock()
+
+
+def _maybe_warm_insights_async(territory_id: str, ranked: List[dict]) -> None:
+    """Fire-and-forget: generate real GPT-4o insights for any HCPs still on the
+    template, in a daemon thread. Next page load serves them from cache."""
+    with _warm_lock:
+        if territory_id in _warming_territories:
+            return
+        if count_uncached_insights(ranked) == 0:
+            return
+        _warming_territories.add(territory_id)
+
+    def _run():
+        try:
+            warm_insights(ranked)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Insight warmer failed for %s: %s", territory_id, exc)
+        finally:
+            with _warm_lock:
+                _warming_territories.discard(territory_id)
+
+    threading.Thread(target=_run, daemon=True, name=f"warm-{territory_id}").start()
 
 
 def _quarter_label(year: int, q: int) -> str:
@@ -40,6 +71,10 @@ def _get_ranked_hcps(db: Session, territory_id: str, ref_date: date) -> List[dic
     cache_key = territory_cache_key("territory:ranked_hcps_v3", territory_id)
     cached = cache_get(cache_key)
     if cached:
+        # Re-attach insights so any GPT-4o text produced by the background warmer
+        # since this list was cached is picked up (cache stores template-only).
+        generate_insights_for_list(cached)
+        _maybe_warm_insights_async(territory_id, cached)
         return cached
 
     (yr1, q1), (yr4, q4) = get_current_and_prior_quarter(ref_date)
@@ -113,8 +148,10 @@ def _get_ranked_hcps(db: Session, territory_id: str, ref_date: date) -> List[dic
     # Enrich with all 4 AI/ML techniques (scores + prediction + NLP + badges)
     ranked = enrich_all_hcps(features, call_stats_map)
 
-    # GPT-4o insights (Technique 4)
+    # Attach insights READ-ONLY (cached real GPT-4o text, else instant template),
+    # then kick off background generation for any HCP still on the template.
     generate_insights_for_list(ranked)
+    _maybe_warm_insights_async(territory_id, ranked)
 
     # Add period metadata
     for hcp in ranked:
@@ -136,7 +173,7 @@ async def get_territory_summary(
     (yr1, q1), _ = get_current_and_prior_quarter(today)
     period  = _quarter_label(yr1, q1)
     summary = build_territory_summary(ranked, rep.territory_id, rep.territory_id, period)
-    summary["last_refresh"] = datetime.now(timezone.utc).strftime("%b %d, %Y %I:%M %p")
+    summary["last_refresh"] = datetime.now(timezone.utc).strftime("%b %d, %Y")
     return TerritorySummary(**summary)
 
 
@@ -162,3 +199,16 @@ async def regenerate_hcp_insight(
     if hcp is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"HCP {hcp_id} not found")
     return HCPInsightResponse(**regenerate_single_hcp_insight(hcp))
+
+
+@router.get("/hcp/{hcp_id}/profile")
+async def get_hcp_profile_view(
+    hcp_id: str,
+    rep: RepIdentity = Depends(get_current_rep),
+    db: Session = Depends(get_db),
+):
+    """View Profile button: full HCP dimension details from vw_tdim_healthcarepractitioner_zenpep_reporting."""
+    profile = get_hcp_profile(db, hcp_id)
+    if profile is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"HCP {hcp_id} not found")
+    return profile

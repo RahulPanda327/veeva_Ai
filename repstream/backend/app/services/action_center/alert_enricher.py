@@ -27,10 +27,11 @@ log = logging.getLogger(__name__)
 _CACHE: Dict[str, Any] = {}
 
 _SYSTEM = """You are a pharmaceutical sales intelligence AI for Zenpep (pancrelipase).
-Given ML-detected alert data, return a JSON object with EXACTLY these 5 keys:
+You are given ONE detected alert with its real data, including the actual affected HCPs
+(names, specialties, segments, locations). Return a JSON object with EXACTLY these 5 keys:
 
 {
-  "title": "<specific alert title — mention threat type, HCP count, and location/territory>",
+  "title": "<specific alert headline>",
   "description": "<2 sentence narrative — what happened, where, how many HCPs, date range>",
   "ai_prescribing_drift_note": "<1-2 sentences — what changed in prescribing behavior and why>",
   "ai_counter_script": "<3-4 sentences — actionable rep script citing specific Zenpep advantages>",
@@ -40,14 +41,36 @@ Given ML-detected alert data, return a JSON object with EXACTLY these 5 keys:
 }
 
 Rules:
-- title: be specific, e.g. "Creon gaining share — 11 HCPs affected in Midwest" not generic "Alert detected"
-- description: mention competitor activity OR formulary change OR HCP detailing decline
-- ai_counter_script: what the rep should say/do NOW — cite Zenpep microspheres, APEX trial, ZenConnect
-- supporting materials: Zenpep-specific only (APEX Trial, ZenConnect, Competitive Positioning Guide, etc.)
-- Return valid JSON only — no markdown, no explanation"""
+- Ground EVERY field in this alert's own data: its HCP count, dates, territory, and the
+  affected HCPs' dominant specialties, segments, and cities/states. Two different alerts
+  must never produce the same or near-identical wording.
+- title: cite the threat + the real HCP count + the real location(s).
+- description: mention competitor activity OR formulary change OR detailing decline, tied
+  to the actual specialties/locations affected.
+- ai_counter_script: what the rep should say/do NOW for THESE HCPs (reference their
+  specialty mix), citing Zenpep microspheres, APEX trial, or ZenConnect where relevant.
+- supporting materials: Zenpep-specific only (APEX Trial, ZenConnect, Competitive
+  Positioning Guide, etc.).
+- Never fabricate clinical data or HCP names not provided.
+- Return valid JSON only — no markdown, no explanation."""
 
 
-def _build_prompt(alert) -> str:
+def _hcp_block(affected_hcps) -> str:
+    """Compact per-HCP lines so the model can ground its language in real details."""
+    if not affected_hcps:
+        return "No individual HCP details available."
+    lines = []
+    for h in affected_hcps[:20]:
+        name  = (h.get("name") or "").strip()
+        place = ", ".join(p for p in (h.get("city"), h.get("state")) if p)
+        parts = [p for p in (h.get("specialty"), h.get("segment"), place) if p]
+        lines.append(f"- {name} ({' | '.join(parts)})")
+    if len(affected_hcps) > 20:
+        lines.append(f"... and {len(affected_hcps) - 20} more")
+    return "\n".join(lines)
+
+
+def _build_prompt(alert, affected_hcps=None) -> str:
     method = (alert.detection_method or "").upper()
     threat = "HCP detailing frequency decline / gradual drift" if "ML" in method or "TREND" in method \
              else "competitive script shift or formulary change"
@@ -63,7 +86,8 @@ def _build_prompt(alert) -> str:
     if slope and slope != 0:
         extra += f"\nMonthly Slope    : {slope:.2f} Rx/month"
 
-    return f"""Severity         : {alert.severity}
+    return f"""Alert Id         : {alert.alert_id}
+Severity         : {alert.severity}
 Detection Method : {alert.detection_method}
 Threat Type      : {threat}
 Territory        : {territory}
@@ -72,12 +96,16 @@ Territory Reach  : {alert.ai_territory_reach}
 Rx Risk          : {alert.ai_rx_risk}
 Detected At      : {alert.detected_at}{extra}
 
-Generate the 5 language fields as JSON."""
+Affected HCP details:
+{_hcp_block(affected_hcps)}
+
+Generate the 5 language fields as JSON, grounded in the details above."""
 
 
-def enrich(alert) -> dict:
+def enrich(alert, affected_hcps=None) -> dict:
     """
-    Returns 5 LLM-generated language fields for the alert.
+    Returns 5 LLM-generated language fields for the alert, grounded in the
+    alert's real data + its actual affected HCP details.
     Cached per alert_id — GPT-4o called only once per process restart.
     """
     alert_id = alert.alert_id
@@ -86,12 +114,12 @@ def enrich(alert) -> dict:
         log.debug("Cache hit for %s", alert_id)
         return _CACHE[alert_id]
 
-    result = _stub(alert) if settings.LLM_STUB_MODE else _call_gpt4o(alert)
+    result = _stub(alert) if settings.LLM_STUB_MODE else _call_gpt4o(alert, affected_hcps)
     _CACHE[alert_id] = result
     return result
 
 
-def _call_gpt4o(alert) -> dict:
+def _call_gpt4o(alert, affected_hcps=None) -> dict:
     client = OpenAI(
         api_key=settings.OPENAI_API_KEY,
         max_retries=settings.OPENAI_MAX_RETRIES,
@@ -103,10 +131,10 @@ def _call_gpt4o(alert) -> dict:
         model=settings.OPENAI_MODEL,
         messages=[
             {"role": "system", "content": _SYSTEM},
-            {"role": "user",   "content": _build_prompt(alert)},
+            {"role": "user",   "content": _build_prompt(alert, affected_hcps)},
         ],
         response_format={"type": "json_object"},
-        temperature=0.2,
+        temperature=0.3,
     )
     return json.loads(response.choices[0].message.content)
 

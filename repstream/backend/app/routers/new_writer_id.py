@@ -1,5 +1,6 @@
 """Module 2 — New Writer Identification API endpoints."""
 import logging
+import threading
 from datetime import date
 from typing import List
 
@@ -9,9 +10,13 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.new_writer import ApproachBriefResponse, NewWriterCandidate, NewWriterListResponse
 from app.services.new_writer_id.approach_brief import (
+    attach_approach_briefs,
+    attach_warm_approaches,
     build_approach_brief_response,
+    count_unwarmed,
     generate_approach_brief,
-    generate_warm_approach_for_list,
+    warm_approach_briefs,
+    warm_approaches,
 )
 from app.services.new_writer_id.icd10_matching import enrich_with_icd10
 from app.services.new_writer_id.match_scoring import enrich_with_peer_match
@@ -24,6 +29,34 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/new-writers", tags=["New Writer Identification"])
 
 _CACHE_TTL = 3600
+
+# Background GPT-4o warm-approach warmer — one per territory at a time
+_warming_territories: set = set()
+_warm_lock = threading.Lock()
+
+
+def _maybe_warm_approaches_async(territory_id: str, candidates: List[dict]) -> None:
+    """Fire-and-forget: GPT-4o warm approaches for candidates still null.
+    Next page load serves them from the persisted cache."""
+    needs_briefs = sum(1 for c in candidates if c.get("approach_brief") is None)
+    with _warm_lock:
+        if territory_id in _warming_territories:
+            return
+        if count_unwarmed(candidates) == 0 and needs_briefs == 0:
+            return
+        _warming_territories.add(territory_id)
+
+    def _run():
+        try:
+            warm_approaches(candidates)
+            warm_approach_briefs(candidates)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Warm approach warmer failed for %s: %s", territory_id, exc)
+        finally:
+            with _warm_lock:
+                _warming_territories.discard(territory_id)
+
+    threading.Thread(target=_run, daemon=True, name=f"warm-approach-{territory_id}").start()
 
 
 def _build_badges(c: dict) -> List[str]:
@@ -55,13 +88,22 @@ def _get_candidates(db: Session, territory_id: str) -> List[dict]:
         c["ai_peer_name"]           = c.pop("peer_name",     c.get("ai_peer_name"))
         c["ai_peer_hcp_id"]         = c.pop("peer_hcp_id",   c.get("ai_peer_hcp_id"))
         c["ai_peer_rationale"]      = c.pop("match_rationale", c.get("ai_peer_rationale"))
-        c["ai_icd10_matched_codes"] = c.pop("matched_icd10_codes", c.get("ai_icd10_matched_codes", []))
-        c["ai_icd10_match_count"]   = len(c["ai_icd10_matched_codes"])
+        codes = c.pop("matched_icd10_codes", c.get("ai_icd10_matched_codes") or [])
+        # No ICD-10 source column exists in the warehouse — send "" when empty
+        c["ai_icd10_matched_codes"] = codes if codes else ""
+        c["ai_icd10_match_count"]   = len(codes)
         c["ai_non_writer_flag"]     = True
-        c["total_in_class_rx"]      = float(c.get("in_class_rx_q1", 0) or 0)
+        # Trailing-4-quarter total from the brand table when present, else the quarterly sum
+        c["total_in_class_rx"]      = float(c.get("total_in_class_rx") or c.get("in_class_rx_q1", 0) or 0)
 
-    # Technique 4: rule-based warm approach for list view
-    generate_warm_approach_for_list(enriched)
+    # Warm approach text: real Warm_Approach_Text DB value (KPI 7) wins when a
+    # peer match exists; otherwise the cached GPT-4o generation (attach below).
+    for c in enriched:
+        c["ai_warm_approach_text"] = c.get("ai_peer_rationale")
+        c["ai_approach_highlight"] = None
+    attach_warm_approaches(enriched)
+    attach_approach_briefs(enriched)
+    _maybe_warm_approaches_async(territory_id, enriched)
 
     # Build badges
     for c in enriched:
