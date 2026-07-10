@@ -34,6 +34,19 @@ from typing import Dict, List, Optional
 
 _SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
+# Real documents in backend/resources/, served at /api/v1/resources/<filename>
+# (mounted in main.py). Backs the "Access Resources" action on payer alerts.
+_PAYER_RESOURCES = [
+    {"title": "Patient Assistance Program (PAP) Enrollment Form", "filename": "1_PAP_Enrollment_Form_Template.docx"},
+    {"title": "Prior Authorization (PA) Support Document",        "filename": "2_Prior_Authorization_Template.docx"},
+    {"title": "Copay Card / Bridge Program Material",              "filename": "3_Copay_Bridge_Program_Template.docx"},
+    {"title": "Payer-Specific Formulary Appeal Template",          "filename": "4_Formulary_Appeal_Template.docx"},
+]
+
+
+def _payer_resource_links() -> List[dict]:
+    return [{"title": r["title"], "url": f"/api/v1/resources/{r['filename']}"} for r in _PAYER_RESOURCES]
+
 _DATE_FORMATS = [
     "%Y-%m-%d %H:%M",
     "%Y-%m-%d %H:%M:%S",
@@ -449,10 +462,8 @@ def _recommended_actions(severity: str, alert_type: str = "COMPETITIVE") -> List
         return ["View HCP List", "Access Resources", "Acknowledge"]
     if alert_type == "HCP_DRIFT":
         return ["Schedule Calls", "Review Later"]
-    if severity in ("CRITICAL", "HIGH"):
+    if severity in ("CRITICAL", "HIGH", "MEDIUM"):
         return ["Deploy to Field", "View Affected HCPs", "Dismiss"]
-    if severity == "MEDIUM":
-        return ["Monitor", "View Affected HCPs", "Dismiss"]
     return ["Monitor", "Dismiss"]
 
 
@@ -623,6 +634,8 @@ def _payer_alerts_from_db(db: Session) -> List[AlertItem]:
                 is_deployed     = False,
                 ai_is_detected  = True,
                 recommended_actions = rec_actions,
+                tier_current    = row.tier_current,
+                tier_previous   = row.tier_previous,
             ))
         return result
     except Exception as exc:
@@ -824,22 +837,6 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
         )
         for a in alerts if a.alert_type == "COMPETITIVE"
     ]
-    payer_alerts: List[PayerAlertItem] = [
-        PayerAlertItem(
-            alert_id                  = a.alert_id,
-            ai_severity               = a.ai_severity,
-            ai_detection_method       = a.ai_detection_method,
-            detected_at               = a.detected_at,
-            title                     = a.title,
-            description               = a.description,
-            ai_affected_hcp_count     = a.ai_affected_hcp_count,
-            ai_territory_reach        = a.ai_territory_reach,
-            ai_rx_risk                = a.ai_rx_risk,
-            ai_prescribing_drift_note = a.ai_prescribing_drift_note,
-            recommended_actions       = a.recommended_actions,
-        )
-        for a in alerts if a.alert_type in ("PAYER", "FORMULARY")
-    ]
     hcp_awareness_alerts: List[HCPAlertItem] = [
         HCPAlertItem(
             alert_id            = a.alert_id,
@@ -853,24 +850,31 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
         for a in alerts if a.alert_type == "HCP_DRIFT"
     ]
 
-    # Payer alerts — directly from DB only, no sample fallback
-    if not payer_alerts:
-        payer_alerts = [
-            PayerAlertItem(
-                alert_id                  = a.alert_id,
-                ai_severity               = a.ai_severity,
-                ai_detection_method       = a.ai_detection_method,
-                detected_at               = a.detected_at,
-                title                     = a.title,
-                description               = a.description,
-                ai_affected_hcp_count     = a.ai_affected_hcp_count,
-                ai_territory_reach        = a.ai_territory_reach,
-                ai_rx_risk                = a.ai_rx_risk,
-                ai_prescribing_drift_note = a.ai_prescribing_drift_note,
-                recommended_actions       = a.recommended_actions,
-            )
-            for a in _payer_alerts_from_db(db)
-        ]
+    # Payer alerts — directly from DB only, no sample fallback.
+    # payer_alerts only ever shows real tier changes, so it's sourced entirely
+    # from insight360_payer_access (which has real tier_current/tier_previous),
+    # not from insight360_active_alerts (AL-xxx alerts have no tier column at
+    # all — e.g. AL-006 gets keyword-classified as "payer" but carries no
+    # actual tier data, so it's excluded here rather than shown as null).
+    payer_alerts: List[PayerAlertItem] = [
+        PayerAlertItem(
+            alert_id                  = a.alert_id,
+            ai_severity               = a.ai_severity,
+            ai_detection_method       = a.ai_detection_method,
+            detected_at               = a.detected_at,
+            title                     = a.title,
+            description               = a.description,
+            ai_affected_hcp_count     = a.ai_affected_hcp_count,
+            ai_territory_reach        = a.ai_territory_reach,
+            ai_rx_risk                = a.ai_rx_risk,
+            ai_prescribing_drift_note = a.ai_prescribing_drift_note,
+            recommended_actions       = a.recommended_actions,
+            tier_current              = a.tier_current,
+            tier_previous             = a.tier_previous,
+        )
+        for a in _payer_alerts_from_db(db)
+        if a.tier_current or a.tier_previous
+    ]
 
     if featured:
         competitive_alerts   = competitive_alerts[:1]
@@ -890,10 +894,11 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
             return plan_hcp_map.get(alert_id[len("PAYER-"):], [])
         return affected_hcp_map.get(alert_id, [])
 
-    # Build 3 sectioned lists, each numbered independently from alert_1
+    # Build 3 sectioned lists — plain arrays of alert objects (array order/index
+    # already gives ordering, no need for redundant "alert_1"/"alert_2" wrapper keys)
     def _build_competitive(items):
         return [
-            {f"alert_{i+1}": {
+            {
                 "alert_type":               "competitive",
                 "alert_id":                 a.alert_id,
                 "ai_severity":              a.ai_severity,
@@ -911,13 +916,13 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
                 "recommended_actions":      a.recommended_actions,
                 "view_affected_hcp":        affected_hcp_map.get(a.alert_id, []),
                 "deploy_to_field":          deploy_map.get(a.alert_id, []),
-            }}
-            for i, a in enumerate(items)
+            }
+            for a in items
         ]
 
     def _build_payer(items):
         return [
-            {f"alert_{i+1}": {
+            {
                 "alert_type":               "payer",
                 "alert_id":                 a.alert_id,
                 "ai_severity":              a.ai_severity,
@@ -931,13 +936,22 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
                 "ai_prescribing_drift_note": a.ai_prescribing_drift_note,
                 "recommended_actions":      a.recommended_actions,
                 "view_hcp_list":            [{"name": h["name"].strip()} for h in _payer_hcps(a.alert_id)],
-            }}
-            for i, a in enumerate(items)
+                "resources":                _payer_resource_links(),
+                # Real Formulary_Tier/Previous_Tier from insight360_payer_access when this
+                # alert came from that table; null when it came from insight360_active_alerts
+                # (e.g. AL-006) — no tier column exists there and no HCP-based join to a
+                # payer plan exists either (verified: zero HCP overlap).
+                "tier_change": (
+                    {"from": a.tier_previous, "to": a.tier_current}
+                    if a.tier_current or a.tier_previous else None
+                ),
+            }
+            for a in items
         ]
 
     def _build_hcp(items):
         return [
-            {f"alert_{i+1}": {
+            {
                 "alert_type":          "hcp_awareness",
                 "alert_id":            a.alert_id,
                 "ai_severity":         a.ai_severity,
@@ -946,8 +960,8 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
                 "title":               a.title,
                 "description":         a.description,
                 "recommended_actions": a.recommended_actions,
-            }}
-            for i, a in enumerate(items)
+            }
+            for a in items
         ]
 
     from app.schemas.action_center import ActiveAlertSection

@@ -160,7 +160,7 @@ _HCP_PRIORITY_SQL = text(f"""
         r.last_rx_date              AS last_rx_date,
         r.total_rx_q1               AS rx_q1,
         r.total_rx_q4               AS rx_q4,
-        t.Segment                   AS segment,
+        b.Segment_Description       AS segment,
         TRY_CAST(t.Decile AS INT)   AS decile_rank,
         {_PROFILE_COLUMNS}
     FROM rx_agg r

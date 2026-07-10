@@ -90,6 +90,10 @@ class AlertItem(BaseModel):
     ai_counter_script:        Optional[str]          = Field(default=None, description="GPT-4o: what rep should say right now — shown in Recommended Counter-Script section")
     ai_supporting_materials:  List[SupportingMaterial] = Field(default=[], description="GPT-4o: Zenpep materials to deploy — shown below counter script")
 
+    # ── Payer tier change ─────────────────────────────────────────────────────
+    tier_current:  Optional[str] = Field(default=None, description="insight360_payer_access.Formulary_Tier. Only populated for payer alerts sourced from that table; null otherwise")
+    tier_previous: Optional[str] = Field(default=None, description="insight360_payer_access.Previous_Tier. Only populated for payer alerts sourced from that table; null otherwise")
+
     # ── State Flags ───────────────────────────────────────────────────────────
     is_acknowledged: bool = Field(default=False, description="Rep has acknowledged this alert")
     is_dismissed:    bool = Field(default=False, description="Rep has dismissed this alert")
@@ -173,6 +177,8 @@ class PayerAlertItem(BaseModel):
     ai_rx_risk:               Optional[str] = None   # shows as "Access Impact" for payer
     ai_prescribing_drift_note: Optional[str] = None
     recommended_actions:      List[str]     = []
+    tier_current:              Optional[str] = Field(default=None, description="insight360_payer_access.Formulary_Tier. Only populated for payer alerts sourced from that table; null otherwise")
+    tier_previous:             Optional[str] = Field(default=None, description="insight360_payer_access.Previous_Tier. Only populated for payer alerts sourced from that table; null otherwise")
 
 
 class AlertGroups(BaseModel):
