@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     CACHE_TTL_APPROACH_BRIEF: int = 3600  # 1 h
     CACHE_TTL_DEFAULT: int = 3600
 
+    # GET-response cache (app/utils/response_cache.py) — no Redis, disk-persisted
+    RESPONSE_CACHE_TTL_MINUTES: int = 1440  # 1440 min = 24 h
+
     # JWT
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"

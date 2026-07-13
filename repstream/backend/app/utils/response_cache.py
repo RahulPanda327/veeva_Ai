@@ -27,9 +27,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
-TTL_SECONDS = 24 * 60 * 60  # 1 day
+TTL_SECONDS = settings.RESPONSE_CACHE_TTL_MINUTES * 60
 
 _CACHE_FILE = Path(__file__).resolve().parents[2] / ".endpoint_response_cache.json"
 
