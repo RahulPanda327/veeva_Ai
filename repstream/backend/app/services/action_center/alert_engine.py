@@ -71,7 +71,16 @@ from app.models.active_alerts import ActiveAlert
 from app.models.territory_prioritization import HealthcarePractitioner
 from app.services.action_center.alert_enricher import enrich
 from app.services.action_center.alert_detector import DetectedAlert, detect_alerts
+from app.services.territory_prioritization.data_ingestion import get_current_and_prior_quarter
 from app.database import engine as db_engine
+
+_QUARTER_MONTHS = {1: "Jan - Mar", 2: "Apr - Jun", 3: "Jul - Sep", 4: "Oct - Dec"}
+
+
+def _current_period_label() -> str:
+    """Same 'Qn YYYY (Mon - Mon)' format as Territory Prioritization's summary."""
+    (year, q), _ = get_current_and_prior_quarter(datetime.now(timezone.utc).date())
+    return f"Q{q} {year} ({_QUARTER_MONTHS[q]})"
 from app.schemas.action_center import (
     ActionCenterSummary,
     ActiveAlertListResponse,
@@ -1020,7 +1029,7 @@ def get_alert_summary(db: Session, territory_id: str) -> ActionCenterSummary:
 
     return ActionCenterSummary(
         territory_id                = territory_id,
-        period                      = "",
+        period                      = _current_period_label(),
         last_refresh                = now_str,
         ai_critical_count           = critical,
         ai_high_priority_count      = high,
