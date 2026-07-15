@@ -52,10 +52,13 @@ _SYSTEM = (
     "Respond ONLY with valid JSON — no markdown, no extra text."
 )
 
-_PROMPT = """Generate a 1-2 sentence (max 30 words) AI insight for a pharma rep visiting this HCP.
+_PROMPT = """Generate a 3-4 sentence (60-100 words) AI insight for a pharma rep visiting this HCP.
 Cite this HCP's OWN numbers (trend %, Rx counts, dates, specialty) so the insight is clearly specific to them — not generic advice.
+Cover, across the 3-4 sentences: (1) their current Rx trend/volume this quarter vs prior quarter, (2) competitor activity/share if relevant, (3) call/engagement history context, (4) a specific, actionable recommendation for this visit.
+If you address the HCP by name, use their REAL name exactly as given below ("{hcp_name}") — never a placeholder like [HCP Name] or [Last Name].
 
 HCP profile:
+- Name: {hcp_name}
 - Specialty: {specialty} | Location: {city_state}
 - Rx trend this quarter: {rx_trend_pct:+.1f}% ({trend_direction})
 - Current-quarter Rx: {rx_q1:.0f} | Prior-quarter: {rx_q4:.0f}
@@ -69,7 +72,7 @@ HCP profile:
 - Peer intro hint: {peer_hint}
 
 Respond ONLY with this JSON:
-{{"insight": "<1-2 sentence insight citing this HCP's specific numbers/dates>", "highlight": "<3-8 word key phrase to show in green>"}}"""
+{{"insight": "<3-4 sentence insight citing this HCP's specific numbers/dates>", "highlight": "<3-8 word key phrase to show in green>"}}"""
 
 
 # ── Rule-based fallback (no API call) ─────────────────────────────────────────
@@ -80,27 +83,54 @@ def _rule_based_insight(hcp: Dict) -> Tuple[str, Optional[str]]:
     comp   = hcp.get("competitor_brand_share", 0.0)
     peer   = hcp.get("ai_peer_match_hint")
     rx_q1  = hcp.get("rx_q1", 0)
+    rx_q4  = hcp.get("rx_q4", 0)
     days   = hcp.get("days_since_last_call")
+    specialty = hcp.get("specialty") or "this specialty"
+    call_str  = f"Last contacted {days} days ago." if days is not None else "No recent call activity on file."
 
     if cat == "NEW_WRITER":
         intro = f" {peer}." if peer else ""
-        return (f"New to territory — peer network shows affinity for ZENPEP.{intro} Priority this week.",
-                peer or "new writer opportunity")
+        return (
+            f"New to territory as a {specialty} prescriber — no established Rx history yet.{intro} "
+            f"Peer network signals suggest strong affinity for ZENPEP based on similar prescribers. "
+            f"{call_str} Prioritize an introductory visit this week to establish the relationship.",
+            peer or "new writer opportunity",
+        )
     if cat == "LAPSED_RECOVERABLE":
-        return ("Lapsed prescriber showing historical Rx volume — re-engagement this week could recover volume.",
-                "re-engagement this week")
+        return (
+            f"Lapsed prescriber with {rx_q4:.0f} Rx in the prior quarter but only {rx_q1:.0f} this quarter. "
+            f"Historical volume suggests recoverable prescribing behavior rather than permanent attrition. "
+            f"{call_str} Re-engagement this week could recover lost volume before the quarter closes.",
+            "re-engagement this week",
+        )
     if cat == "AT_RISK":
         pct = round(comp * 100)
-        return (f"Competitor brand share at {pct}% with declining Zenpep Rx — immediate counter-detailing needed.",
-                "immediate counter-detailing")
+        return (
+            f"Rx volume has moved from {rx_q4:.0f} to {rx_q1:.0f} this quarter, a {trend.lower()} trend. "
+            f"Competitor brand share is at {pct}% and rising, putting this account at risk. "
+            f"{call_str} Immediate counter-detailing is needed to protect remaining volume.",
+            "immediate counter-detailing",
+        )
     if cat == "ACTIVE_HIGH_VALUE" and trend == "Improving":
-        return ("Rx volume trending upward this quarter. Competitor brand share declining. High conversion potential.",
-                "High conversion potential")
+        return (
+            f"Rx volume is trending upward this quarter, from {rx_q4:.0f} to {rx_q1:.0f}. "
+            f"Competitor brand share is declining, indicating growing preference for ZENPEP among this {specialty} prescriber. "
+            f"{call_str} High conversion potential — consider expanding the conversation to additional patient segments.",
+            "High conversion potential",
+        )
     if trend == "Declining":
-        return ("Rx volume declining this quarter — schedule maintenance call before end of month.",
-                "schedule maintenance call")
-    return ("Stable prescriber with consistent Rx activity. Consider maintenance call this month.",
-            "consistent Rx activity")
+        return (
+            f"Rx volume is declining this quarter, from {rx_q4:.0f} to {rx_q1:.0f}. "
+            f"This {specialty} prescriber may be shifting share to a competitor or reducing overall prescribing. "
+            f"{call_str} Schedule a maintenance call before end of month to understand the cause and re-engage.",
+            "schedule maintenance call",
+        )
+    return (
+        f"Stable prescriber with consistent Rx activity this quarter ({rx_q1:.0f} Rx, prior quarter {rx_q4:.0f}). "
+        f"No significant competitor pressure detected for this {specialty} account. "
+        f"{call_str} Consider a routine maintenance call this month to reinforce the relationship.",
+        "consistent Rx activity",
+    )
 
 
 # ── Direct GPT-4o call (bypasses Redis, uses in-memory cache) ─────────────────
@@ -110,6 +140,7 @@ def _build_prompt(hcp: Dict) -> str:
     pred_q = hcp.get("ai_predicted_next_q_rx")
     city_state = ", ".join(p for p in (hcp.get("city"), hcp.get("state")) if p) or "unknown"
     return _PROMPT.format(
+        hcp_name=(hcp.get("name") or "").strip() or "this HCP",
         specialty=hcp.get("specialty") or "unknown",
         city_state=city_state,
         rx_trend_pct=hcp.get("rx_trend_pct", 0.0),
@@ -157,7 +188,7 @@ def _call_gpt4o(hcp: Dict) -> Tuple[str, Optional[str]]:
                 {"role": "system", "content": _SYSTEM},
                 {"role": "user",   "content": _build_prompt(hcp)},
             ],
-            max_tokens=120,
+            max_tokens=220,
             temperature=0.3,
         )
         data = json.loads(resp.choices[0].message.content)

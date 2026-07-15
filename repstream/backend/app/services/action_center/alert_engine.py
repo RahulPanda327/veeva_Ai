@@ -903,74 +903,80 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
             return plan_hcp_map.get(alert_id[len("PAYER-"):], [])
         return affected_hcp_map.get(alert_id, [])
 
-    # Build 3 sectioned lists — plain arrays of alert objects (array order/index
-    # already gives ordering, no need for redundant "alert_1"/"alert_2" wrapper keys)
+    # Build 3 sectioned lists — each item wrapped as {"alert_N": {...}}, N = its
+    # 1-indexed position in the list.
     def _build_competitive(items):
         return [
             {
-                "alert_type":               "competitive",
-                "alert_id":                 a.alert_id,
-                "ai_severity":              a.ai_severity,
-                "ai_detection_method":      a.ai_detection_method,
-                "detected_at":              a.detected_at,
-                "title":                    a.title,
-                "description":              a.description,
-                "ai_affected_hcp_count":    a.ai_affected_hcp_count,
-                "ai_territory_reach":       a.ai_territory_reach,
-                "ai_rx_risk":               a.ai_rx_risk,
-                "ai_icd10_codes_affected":  [x.model_dump() for x in a.ai_icd10_codes_affected],
-                "ai_prescribing_drift_note": a.ai_prescribing_drift_note,
-                "ai_counter_script":        a.ai_counter_script,
-                "ai_supporting_materials":  [m.model_dump() for m in a.ai_supporting_materials],
-                "recommended_actions":      a.recommended_actions,
-                "view_affected_hcp":        affected_hcp_map.get(a.alert_id, []),
-                "deploy_to_field":          deploy_map.get(a.alert_id, []),
+                f"alert_{i}": {
+                    "alert_type":               "competitive",
+                    "alert_id":                 a.alert_id,
+                    "ai_severity":              a.ai_severity,
+                    "ai_detection_method":      a.ai_detection_method,
+                    "detected_at":              a.detected_at,
+                    "title":                    a.title,
+                    "description":              a.description,
+                    "ai_affected_hcp_count":    a.ai_affected_hcp_count,
+                    "ai_territory_reach":       a.ai_territory_reach,
+                    "ai_rx_risk":               a.ai_rx_risk,
+                    "ai_icd10_codes_affected":  [x.model_dump() for x in a.ai_icd10_codes_affected],
+                    "ai_prescribing_drift_note": a.ai_prescribing_drift_note,
+                    "ai_counter_script":        a.ai_counter_script,
+                    "ai_supporting_materials":  [m.model_dump() for m in a.ai_supporting_materials],
+                    "recommended_actions":      a.recommended_actions,
+                    "view_affected_hcp":        affected_hcp_map.get(a.alert_id, []),
+                    "deploy_to_field":          deploy_map.get(a.alert_id, []),
+                }
             }
-            for a in items
+            for i, a in enumerate(items, start=1)
         ]
 
     def _build_payer(items):
         return [
             {
-                "alert_type":               "payer",
-                "alert_id":                 a.alert_id,
-                "ai_severity":              a.ai_severity,
-                "ai_detection_method":      a.ai_detection_method,
-                "detected_at":              a.detected_at,
-                "title":                    a.title,
-                "description":              a.description,
-                "ai_affected_hcp_count":    a.ai_affected_hcp_count,
-                "ai_territory_reach":       a.ai_territory_reach,
-                "ai_rx_risk":               a.ai_rx_risk,
-                "ai_prescribing_drift_note": a.ai_prescribing_drift_note,
-                "recommended_actions":      a.recommended_actions,
-                "view_hcp_list":            [{"name": h["name"].strip()} for h in _payer_hcps(a.alert_id)],
-                "resources":                _payer_resource_links(),
-                # Real Formulary_Tier/Previous_Tier from insight360_payer_access when this
-                # alert came from that table; null when it came from insight360_active_alerts
-                # (e.g. AL-006) — no tier column exists there and no HCP-based join to a
-                # payer plan exists either (verified: zero HCP overlap).
-                "tier_change": (
-                    {"from": a.tier_previous, "to": a.tier_current}
-                    if a.tier_current or a.tier_previous else None
-                ),
+                f"alert_{i}": {
+                    "alert_type":               "payer",
+                    "alert_id":                 a.alert_id,
+                    "ai_severity":              a.ai_severity,
+                    "ai_detection_method":      a.ai_detection_method,
+                    "detected_at":              a.detected_at,
+                    "title":                    a.title,
+                    "description":              a.description,
+                    "ai_affected_hcp_count":    a.ai_affected_hcp_count,
+                    "ai_territory_reach":       a.ai_territory_reach,
+                    "ai_rx_risk":               a.ai_rx_risk,
+                    "ai_prescribing_drift_note": a.ai_prescribing_drift_note,
+                    "recommended_actions":      a.recommended_actions,
+                    "view_hcp_list":            [{"name": h["name"].strip()} for h in _payer_hcps(a.alert_id)],
+                    "resources":                _payer_resource_links(),
+                    # Real Formulary_Tier/Previous_Tier from insight360_payer_access when this
+                    # alert came from that table; null when it came from insight360_active_alerts
+                    # (e.g. AL-006) — no tier column exists there and no HCP-based join to a
+                    # payer plan exists either (verified: zero HCP overlap).
+                    "tier_change": (
+                        {"from": a.tier_previous, "to": a.tier_current}
+                        if a.tier_current or a.tier_previous else None
+                    ),
+                }
             }
-            for a in items
+            for i, a in enumerate(items, start=1)
         ]
 
     def _build_hcp(items):
         return [
             {
-                "alert_type":          "hcp_awareness",
-                "alert_id":            a.alert_id,
-                "ai_severity":         a.ai_severity,
-                "ai_detection_method": a.ai_detection_method,
-                "detected_at":         a.detected_at,
-                "title":               a.title,
-                "description":         a.description,
-                "recommended_actions": a.recommended_actions,
+                f"alert_{i}": {
+                    "alert_type":          "hcp_awareness",
+                    "alert_id":            a.alert_id,
+                    "ai_severity":         a.ai_severity,
+                    "ai_detection_method": a.ai_detection_method,
+                    "detected_at":         a.detected_at,
+                    "title":               a.title,
+                    "description":         a.description,
+                    "recommended_actions": a.recommended_actions,
+                }
             }
-            for a in items
+            for i, a in enumerate(items, start=1)
         ]
 
     from app.schemas.action_center import ActiveAlertSection

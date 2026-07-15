@@ -84,7 +84,7 @@ class TerritoryHierarchy(Base):
     __tablename__ = "vw_tdim_terr_hierarchy_zenpep_reporting"
     __table_args__ = {"schema": settings.HUB_SCHEMA, "extend_existing": True}
 
-    territory_id = Column(String(50), primary_key=True)
+    territory_id = Column("sf_terr_pk", String(100), primary_key=True)
     territory_name = Column(String(100))
     territory_code = Column(String(50))
     district_id = Column(String(50))

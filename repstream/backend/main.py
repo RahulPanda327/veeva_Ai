@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.routers import objection_handler, new_writer_id, territory_prioritization, action_center
-from app.utils.envelope import EnvelopeMiddleware
+from app.utils.masking import BrandMaskingMiddleware
 from app.utils.response_cache import DailyResponseCacheMiddleware, clear_all as clear_all_cached_responses
 
 RESOURCES_DIR = Path(__file__).resolve().parent / "resources"
@@ -38,11 +38,9 @@ app = FastAPI(
 )
 
 # Middleware order (Starlette: last added = outermost = runs first on request):
-#   CORS (outer) -> DailyResponseCache (middle) -> Envelope (inner, closest to routes)
-# Envelope wraps the raw route output into {success, response} FIRST, so the
-# cache stores/serves the already-wrapped body; CORS stays outermost so its
-# headers still apply even when Cache returns early on a hit.
-app.add_middleware(EnvelopeMiddleware)
+#   CORS (outer) -> DailyResponseCache (middle) -> BrandMasking (inner, closest to routes)
+# Masking runs first so the cache stores the already-masked body.
+app.add_middleware(BrandMaskingMiddleware)
 app.add_middleware(DailyResponseCacheMiddleware)
 
 app.add_middleware(
