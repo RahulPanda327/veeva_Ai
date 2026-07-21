@@ -1,5 +1,10 @@
 """RepStream — FastAPI application entry point."""
+import logging
 import mimetypes
+import subprocess
+import sys
+import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -13,6 +18,9 @@ from app.utils.masking import BrandMaskingMiddleware
 from app.utils.response_cache import DailyResponseCacheMiddleware, clear_all as clear_all_cached_responses
 
 RESOURCES_DIR = Path(__file__).resolve().parent / "resources"
+_BACKEND_DIR = Path(__file__).resolve().parent
+
+logger = logging.getLogger(__name__)
 
 # Windows' mimetypes DB often lacks modern Office formats — register explicitly
 # so served .docx/.xlsx/.pptx files get the right Content-Type, not none.
@@ -22,8 +30,49 @@ mimetypes.add_type("application/vnd.openxmlformats-officedocument.presentationml
 mimetypes.add_type("application/pdf", ".pdf")
 
 
+def _refresh_endpoint_cache_background() -> None:
+    """Clear the response cache and re-warm the endpoints themselves — runs
+    once on every app startup (no fixed clock time; tied to the process
+    lifecycle instead). Runs in a background thread so server startup itself
+    isn't blocked. Fast: only the 9 response-cached endpoints get hit, using
+    whatever is already in the 3 AI-generation caches as-is.
+
+    Deliberately does NOT touch the 3 AI-generation caches (insight/warm-
+    approach/email) — regenerating those means a real DB scan across all
+    204 territories plus real GPT-4o calls per HCP, which realistically
+    takes 50+ hours end to end. Doing that on every --reload restart (which
+    fires on every file save during dev) would mean it never actually
+    finishes and just keeps restarting from zero. Full AI-cache regeneration
+    is still available on demand via `python scripts/refresh_cache.py` or
+    `python scripts/warm_cache.py`, run manually or on an external schedule
+    (e.g. the VM's own cron/Task Scheduler) — just not tied to app startup.
+
+    The response cache IS cleared HERE, in-process, first — the warming
+    subprocess spawned below runs as a separate process, and that process
+    clearing the disk file has no effect on THIS process's already-loaded
+    in-memory copy (loaded once, at import time, from whatever was on disk
+    from before this restart). Without this explicit in-process clear, any
+    endpoint that was already cached before the restart would keep silently
+    serving that old, stale data forever.
+
+    The short sleep just lets uvicorn finish binding the port before the
+    subprocess tries to call back into this same server over HTTP."""
+    cleared = clear_all_cached_responses()
+    logger.info("Startup: cleared %d in-memory response cache entries.", cleared)
+
+    time.sleep(5)
+    try:
+        subprocess.run(
+            [sys.executable, "scripts/warm_cache.py", "--only-response-cache"],
+            cwd=_BACKEND_DIR,
+        )
+    except Exception:
+        logger.exception("Startup endpoint-cache refresh failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
+    threading.Thread(target=_refresh_endpoint_cache_background, daemon=True, name="startup-cache-refresh").start()
     yield
 
 

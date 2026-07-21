@@ -29,13 +29,6 @@ class Settings(BaseSettings):
     CACHE_TTL_APPROACH_BRIEF: int = 3600  # 1 h
     CACHE_TTL_DEFAULT: int = 3600
 
-    # GET-response cache (app/utils/response_cache.py) — no Redis, disk-persisted
-    RESPONSE_CACHE_TTL_MINUTES: int = 1440  # 1440 min = 24 h
-
-    # Daily time (24h "HH:MM") the scripts/warm_cache.py scheduled task runs at.
-    # Change this, then run `python scripts/schedule_warm_cache.py` to apply it.
-    WARM_CACHE_TIME: str = "06:00"
-
     # JWT
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"

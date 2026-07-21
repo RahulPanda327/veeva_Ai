@@ -129,32 +129,48 @@ def main():
     parser.add_argument("--territory-id", default=None, help="Warm only this territory instead of every territory.")
     parser.add_argument("--base-url", default="http://localhost:8000", help="Where the live server is, for response-cache warming.")
     parser.add_argument("--skip-response-cache", action="store_true", help="Only warm the 3 AI caches, skip the response cache step.")
+    parser.add_argument("--only-response-cache", action="store_true",
+                         help="Skip the AI-cache warming loop entirely (no DB territory scan, no GPT-4o calls) "
+                              "and only run the fast endpoint/response-cache warming step. Uses whatever is "
+                              "already in the 3 AI-generation caches as-is, without regenerating anything.")
     args = parser.parse_args()
 
-    db = SessionLocal()
-    try:
+    failed = 0
+    total = 0
+
+    if not args.only_response_cache:
+        db = SessionLocal()
         try:
-            territory_ids = [args.territory_id] if args.territory_id else _all_territory_ids(db)
-        except Exception:
-            log.exception("Could not load territory list — aborting run.")
-            return
-        log.info("Warming %d territor%s...", len(territory_ids), "y" if len(territory_ids) == 1 else "ies")
-
-        start = time.time()
-        for territory_id in territory_ids:
             try:
-                warm_territory(db, territory_id)
+                territory_ids = [args.territory_id] if args.territory_id else _all_territory_ids(db)
             except Exception:
-                log.exception("Failed to warm territory %s", territory_id)
+                log.exception("Could not load territory list — aborting run (nothing was warmed).")
+                sys.exit(1)
+            total = len(territory_ids)
+            log.info("Warming %d territor%s...", total, "y" if total == 1 else "ies")
 
-        log.info("AI caches done in %.1fs.", time.time() - start)
-    finally:
-        db.close()
+            start = time.time()
+            for territory_id in territory_ids:
+                try:
+                    warm_territory(db, territory_id)
+                except Exception:
+                    log.exception("Failed to warm territory %s", territory_id)
+                    failed += 1
+
+            log.info("AI caches done in %.1fs (%d/%d territories failed).", time.time() - start, failed, total)
+        finally:
+            db.close()
 
     if not args.skip_response_cache:
         warm_response_cache(args.base_url)
 
     log.info("Warm-up run complete.")
+
+    if total and failed == total:
+        # Every single territory failed — this is not a successful run,
+        # even though we didn't crash. Let callers (e.g. refresh_cache.py)
+        # know via a non-zero exit code instead of silently reporting success.
+        sys.exit(1)
 
 
 if __name__ == "__main__":

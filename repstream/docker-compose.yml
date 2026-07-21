@@ -96,16 +96,5 @@ services:
       - ./backend:/app
     command: celery -A app.tasks.celery_app beat --loglevel=info
 
-  # ── React Frontend ─────────────────────────────────────────────────────────
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    ports:
-      - "80:80"
-    depends_on:
-      - backend
-
 volumes:
   postgres_data:

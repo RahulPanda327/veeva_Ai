@@ -1,11 +1,11 @@
-"""Day-long GET response cache — no Redis required.
+"""Permanent GET response cache — no Redis required, no expiry.
 
 Registered once in main.py as ASGI middleware. The first time a caller hits a
-GET endpoint, the response is stored for 24 hours keyed by (method, path,
-query params, caller). If the same caller hits the same endpoint again within
-that window, the stored response is returned instantly instead of
-recomputing. Entries expire automatically after 24h (checked lazily on read);
-`clear_expired()` can be called to sweep them out proactively.
+GET endpoint, the response is stored, keyed by (method, path, query params,
+caller). Every later hit on that same key is served from cache — forever,
+until explicitly cleared (scripts/clear_cache.py, POST /admin/cache/clear,
+or the app's own startup refresh in main.py). There is no time-based expiry;
+staleness is handled entirely by explicit clears, not a TTL.
 
 Independent of app/utils/cache.py (which needs Redis and is currently a
 no-op in this environment) — this one is in-memory + a local JSON file, same
@@ -19,7 +19,6 @@ import json
 import logging
 import os
 import threading
-import time
 from pathlib import Path
 from typing import Dict
 
@@ -27,11 +26,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from app.config import settings
-
 logger = logging.getLogger(__name__)
-
-TTL_SECONDS = settings.RESPONSE_CACHE_TTL_MINUTES * 60
 
 _CACHE_FILE = Path(__file__).resolve().parents[2] / ".endpoint_response_cache.json"
 
@@ -74,17 +69,6 @@ def _cache_key(request: Request) -> str:
     return f"{request.method}:{request.url.path}:{query}:{caller}"
 
 
-def clear_expired() -> int:
-    """Remove expired entries. Returns how many were dropped."""
-    now = time.time()
-    expired = [k for k, v in _cache.items() if v["expires_at"] <= now]
-    for k in expired:
-        del _cache[k]
-    if expired:
-        _save()
-    return len(expired)
-
-
 def clear_all() -> int:
     n = len(_cache)
     _cache.clear()
@@ -93,24 +77,22 @@ def clear_all() -> int:
 
 
 class DailyResponseCacheMiddleware(BaseHTTPMiddleware):
-    """Cache GET responses for 24h, keyed by endpoint + query + caller."""
+    """Cache GET responses permanently, keyed by endpoint + query + caller.
+    No expiry — only cleared explicitly (clear_all(), the admin endpoint,
+    or the app's own startup refresh)."""
 
     async def dispatch(self, request: Request, call_next):
         if request.method != "GET":
             return await call_next(request)
 
         key = _cache_key(request)
-        now = time.time()
         entry = _cache.get(key)
 
-        if entry and entry["expires_at"] > now:
+        if entry:
             logger.info("Response cache HIT: %s", request.url.path)
             body = base64.b64decode(entry["body"])
             headers = {"content-type": entry["content_type"]} if entry.get("content_type") else None
             return Response(content=body, status_code=entry["status_code"], headers=headers)
-
-        if entry:
-            del _cache[key]  # expired — fall through and regenerate
 
         response = await call_next(request)
 
@@ -125,10 +107,9 @@ class DailyResponseCacheMiddleware(BaseHTTPMiddleware):
                 "body": base64.b64encode(body).decode("ascii"),
                 "status_code": response.status_code,
                 "content_type": content_type,
-                "expires_at": now + TTL_SECONDS,
             }
             _save()
-            logger.info("Response cache SET: %s (expires in 24h)", request.url.path)
+            logger.info("Response cache SET (permanent): %s", request.url.path)
 
             headers = {"content-type": content_type} if content_type else None
             return Response(content=body, status_code=response.status_code, headers=headers)
