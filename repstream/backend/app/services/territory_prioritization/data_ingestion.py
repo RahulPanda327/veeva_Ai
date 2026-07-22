@@ -319,20 +319,24 @@ def _load_rx_pivot_from_db(db: Session, territory_id: str) -> Optional[pd.DataFr
 
 
 def _load_calls_from_db(db: Session, territory_id: str, ref_date: date) -> Optional[dict]:
-    """90-day call stats per HCP. Returns None on any error."""
+    """90-day call stats per HCP. Returns None on any error.
+
+    No Is_Reached column and no Call_Outcome column exist on
+    vw_tfact_callactivitydetails_zenpep_reporting (verified against
+    INFORMATION_SCHEMA.COLUMNS) — every logged call counts, and
+    last_outcome always comes back None since there's no source column
+    for it anywhere on this view."""
     try:
         engine = db.bind
         cutoff = ref_date - timedelta(days=90)
         sql = text("""
             SELECT
-                c.HCP_Durable_Id    AS hcp_id,
-                MAX(c.Call_Date)    AS last_call_date,
-                COUNT(c.Call_Id)    AS call_count,
-                MAX(c.Call_Outcome) AS last_outcome
+                c.HCP_Durable_Id                      AS hcp_id,
+                MAX(TRY_CAST(c.Call_Date AS DATE))     AS last_call_date,
+                COUNT(c.Call_Id)                       AS call_count
             FROM hub_insight360.vw_tfact_callactivitydetails_zenpep_reporting c
             WHERE c.sf_terr_pk_gi = :terr
-              AND c.Call_Date >= :cutoff
-              AND c.Is_Reached = 1
+              AND TRY_CAST(c.Call_Date AS DATE) >= :cutoff
             GROUP BY c.HCP_Durable_Id
         """)
         df = pd.read_sql(sql, engine, params={"terr": territory_id, "cutoff": str(cutoff)})
@@ -341,11 +345,16 @@ def _load_calls_from_db(db: Session, territory_id: str, ref_date: date) -> Optio
         result = {}
         for _, row in df.iterrows():
             lc = row["last_call_date"]
-            days = (ref_date - lc.date()).days if lc is not None else None
+            if lc is not None and not pd.isna(lc):
+                lc_date = lc.date() if hasattr(lc, "date") else lc
+                days = (ref_date - lc_date).days
+            else:
+                lc_date = None
+                days = None
             result[row["hcp_id"]] = {
-                "last_call_date": lc.date() if lc is not None else None,
+                "last_call_date": lc_date,
                 "call_count_90d": int(row["call_count"] or 0),
-                "last_outcome": row["last_outcome"],
+                "last_outcome": None,
                 "days_since_last_call": days,
             }
         return result

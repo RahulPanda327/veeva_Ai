@@ -56,18 +56,42 @@ def _refresh_endpoint_cache_background() -> None:
     serving that old, stale data forever.
 
     The short sleep just lets uvicorn finish binding the port before the
-    subprocess tries to call back into this same server over HTTP."""
+    subprocess tries to call back into this same server over HTTP.
+
+    base_url is detected from THIS process's own --port argument (uvicorn
+    runs main.py in the same process it was launched in, so sys.argv still
+    has whatever was typed on the command line) — without this, the warm-up
+    would always call back to a hardcoded localhost:8000, which silently
+    does nothing whenever the server is actually started on a different
+    port (e.g. `uvicorn main:app --port 8006`)."""
     cleared = clear_all_cached_responses()
     logger.info("Startup: cleared %d in-memory response cache entries.", cleared)
 
     time.sleep(5)
     try:
         subprocess.run(
-            [sys.executable, "scripts/warm_cache.py", "--only-response-cache"],
+            [sys.executable, "scripts/warm_cache.py", "--only-response-cache", "--base-url", _detect_base_url()],
             cwd=_BACKEND_DIR,
         )
     except Exception:
         logger.exception("Startup endpoint-cache refresh failed")
+
+
+def _detect_base_url() -> str:
+    """Read --port (and --host, if not a bind-all address) from sys.argv —
+    the same argv uvicorn itself was launched with, since main.py runs in
+    that same process. Falls back to localhost:8000 if not found."""
+    argv = sys.argv
+    port = "8000"
+    host = "localhost"
+    for i, arg in enumerate(argv):
+        if arg == "--port" and i + 1 < len(argv):
+            port = argv[i + 1]
+        elif arg == "--host" and i + 1 < len(argv):
+            candidate = argv[i + 1]
+            if candidate not in ("0.0.0.0", "::"):  # not connectable as a destination
+                host = candidate
+    return f"http://{host}:{port}"
 
 
 @asynccontextmanager
