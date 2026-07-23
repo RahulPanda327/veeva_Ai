@@ -39,6 +39,7 @@ from app.services.new_writer_id.non_writer_detection import (
     enrich_with_hcp_dimensions,
 )
 from app.services.territory_prioritization.data_ingestion import get_current_and_prior_quarter
+from app.utils.cache_paths import cache_file
 from app.utils.auth import RepIdentity, get_current_rep
 from app.utils.cache import cache_get, cache_set, territory_cache_key
 
@@ -173,7 +174,7 @@ def _get_candidates(db: Session, territory_id: str) -> List[dict]:
 # already-warmed territory lists.
 # ─────────────────────────────────────────────────────────────────────────────
 
-_CANDIDATE_CACHE_FILE = Path(__file__).resolve().parents[2] / ".new_writer_candidates_cache.json"
+_CANDIDATE_CACHE_FILE = cache_file("new_writer_candidates_cache.json")
 _CANDIDATE_CACHE: dict[str, List[dict]] = {}   # bare territory_id -> enriched candidates
 _candidate_io_lock = threading.Lock()
 

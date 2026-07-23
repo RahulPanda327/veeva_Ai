@@ -1,10 +1,10 @@
-"""Clear ALL RepStream local disk caches (backend/.*.json).
+"""Clear ALL RepStream local disk caches (backend/cache/*.json).
 
-Clears all 4 disk-persisted caches used across the project:
-  - .endpoint_response_cache.json  (permanent GET-response cache, response_cache.py)
-  - .insight_cache.json            (Territory Prioritization GPT-4o insights)
-  - .warm_approach_cache.json      (New Writer ID GPT-4o warm-approach text)
-  - .approach_email_cache.json     (New Writer ID GPT-4o outreach emails)
+Clears the disk-persisted caches used across the project:
+  - endpoint_response_cache.json  (permanent GET-response cache, response_cache.py)
+  - insight_cache.json            (Territory Prioritization GPT-4o insights)
+  - warm_approach_cache.json      (New Writer ID GPT-4o warm-approach text)
+  - approach_email_cache.json     (New Writer ID GPT-4o outreach emails)
 
 None of the 4 expire on their own — all are permanent until explicitly
 cleared (regenerating any of them means a real DB query or GPT-4o call), so
@@ -29,12 +29,12 @@ from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.utils.response_cache import clear_all as clear_response_cache
+from app.utils.cache_paths import cache_file
 
-_BACKEND_DIR = Path(__file__).resolve().parent.parent
 _AI_CACHE_FILES = {
-    "insight cache":        _BACKEND_DIR / ".insight_cache.json",
-    "warm approach cache":  _BACKEND_DIR / ".warm_approach_cache.json",
-    "approach email cache": _BACKEND_DIR / ".approach_email_cache.json",
+    "insight cache":        cache_file("insight_cache.json"),
+    "warm approach cache":  cache_file("warm_approach_cache.json"),
+    "approach email cache": cache_file("approach_email_cache.json"),
 }
 
 

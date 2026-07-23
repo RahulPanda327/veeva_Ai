@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from app.config import settings
+from app.utils.cache_paths import cache_file
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ _BRIEF_CACHE: Dict[str, Dict] = {}
 
 # ── GPT-4o warm approach cache (persisted, same pattern as territory insights) ─
 _WARM_CACHE: Dict[str, Dict] = {}
-_WARM_CACHE_FILE = Path(__file__).resolve().parents[3] / ".warm_approach_cache.json"
+_WARM_CACHE_FILE = cache_file("warm_approach_cache.json")
 _warm_io_lock = threading.Lock()
 _WARM_MAX_WORKERS = 16
 _WARM_SAVE_EVERY = 25
@@ -138,7 +139,7 @@ def _call_gpt4o_warm(hcp: Dict) -> Optional[Dict]:
 # ── GPT-4o email-style approach brief (embedded per candidate) ────────────────
 
 _EMAIL_CACHE: Dict[str, Dict] = {}
-_EMAIL_CACHE_FILE = Path(__file__).resolve().parents[3] / ".approach_email_cache.json"
+_EMAIL_CACHE_FILE = cache_file("approach_email_cache.json")
 
 
 def _normalize_email_entry(v: Dict) -> Dict:

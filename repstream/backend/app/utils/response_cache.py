@@ -26,9 +26,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.utils.cache_paths import cache_file
+
 logger = logging.getLogger(__name__)
 
-_CACHE_FILE = Path(__file__).resolve().parents[2] / ".endpoint_response_cache.json"
+_CACHE_FILE = cache_file("endpoint_response_cache.json")
 
 _cache: Dict[str, dict] = {}
 _io_lock = threading.Lock()

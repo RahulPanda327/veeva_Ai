@@ -11,13 +11,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.config import settings
+from app.utils.cache_paths import cache_file
 
 logger = logging.getLogger(__name__)
 
 # In-process cache of generated insights, persisted to disk so warmed GPT-4o
 # text survives uvicorn --reload restarts (no Redis in this deployment).
 _INSIGHT_CACHE: Dict[str, Any] = {}
-_CACHE_FILE = Path(__file__).resolve().parents[3] / ".insight_cache.json"   # backend/.insight_cache.json
+_CACHE_FILE = cache_file("insight_cache.json")   # backend/cache/insight_cache.json
 _cache_io_lock = threading.Lock()
 
 
