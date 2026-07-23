@@ -8,13 +8,13 @@ from app.config import settings
 
 
 class PeerMatch(Base):
-    """Maps to insight360_peer_match (KPI 7).
+    """Maps to insight360_peer_match_dul (KPI 7).
 
     Peer_Match_Pct is stored as a percentage string e.g. "87%".
     Parse to float with: float(row.peer_match_pct.replace('%', ''))
     """
 
-    __tablename__ = "insight360_peer_match"
+    __tablename__ = "insight360_peer_match_dul"
     __table_args__ = {"schema": settings.HUB_SCHEMA, "extend_existing": True}
 
     hcp_id              = Column("HCP_Durable_Id",        String(50),  primary_key=True)
@@ -30,9 +30,9 @@ class PeerMatch(Base):
 class NewWriterCard(Base):
     """Maps to insight360_new_writer_id — the 11 keys rendered on the New Writer ID card.
 
-    One flat enriched table (same pattern as insight360_active_alerts /
-    insight360_hcp_awareness) instead of assembling the card from 3 sources
-    (Rx views + insight360_peer_match + Python-computed ICD-10/badges).
+    One flat enriched table (same pattern as insight360_active_alerts_dul /
+    insight360_hcp_awareness_dul) instead of assembling the card from 3 sources
+    (Rx views + insight360_peer_match_dul + Python-computed ICD-10/badges).
 
     Top_5_In_Class_Rx is a JSON-encoded list of {"brand": str, "rx": int}.
     Analysis_Badges and ICD10_Matched_Codes are pipe-separated strings.

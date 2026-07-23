@@ -140,7 +140,7 @@ _HCP_PRIORITY_SQL = text(f"""
                  THEN ISNULL(TRY_CAST(s.Total_Rx_Quantity AS FLOAT), 0) ELSE 0 END) AS total_rx_q4,
             MAX(CASE WHEN ISNULL(TRY_CAST(s.Total_Rx_Quantity AS FLOAT), 0) > 0
                  THEN TRY_CAST(s.Month_Ending_Date AS DATE) END) AS last_rx_date
-        FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting s
+        FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting_dul s
         WHERE s.sf_terr_pk_gi = :terr
         GROUP BY s.HCP_Durable_Id
     ),
@@ -150,7 +150,7 @@ _HCP_PRIORITY_SQL = text(f"""
             d.Segment,
             d.Decile,
             ROW_NUMBER() OVER (PARTITION BY d.HCP_Durable_Id ORDER BY TRY_CAST(d.End_Date AS DATE) DESC) AS rn
-        FROM hub_insight360.vw_tfact_target_plan_reporting d
+        FROM hub_insight360.vw_tfact_target_plan_reporting_dul d
     )
     SELECT TOP 500
         b.HCP_Durable_Id            AS hcp_id,
@@ -164,9 +164,9 @@ _HCP_PRIORITY_SQL = text(f"""
         TRY_CAST(t.Decile AS INT)   AS decile_rank,
         {_PROFILE_COLUMNS}
     FROM rx_agg r
-    JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting b
+    JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting_dul b
       ON b.HCP_Durable_Id = r.HCP_Durable_Id
-    LEFT JOIN hub_insight360.insight360_hcp_awareness a
+    LEFT JOIN hub_insight360.insight360_hcp_awareness_dul a
       ON a.HCP_Durable_Id = r.HCP_Durable_Id
     LEFT JOIN target_ranked t
       ON t.HCP_Durable_Id = r.HCP_Durable_Id AND t.rn = 1
@@ -180,7 +180,7 @@ def _latest_quarter_with_rx_data(engine) -> Optional[Tuple[int, int]]:
         df = pd.read_sql(
             text("""
                 SELECT MAX(TRY_CAST(Month_Ending_Date AS DATE)) AS max_dt
-                FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting
+                FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting_dul
             """),
             engine,
         )
@@ -248,7 +248,7 @@ def get_hcp_profile(db: Session, hcp_id: str) -> Optional[dict]:
                 b.Formatted_Name            AS formatted_name,
                 b.Specialty_Description     AS specialist_description,
                 {_PROFILE_COLUMNS.replace('is_ama_do_not_contact', 'is_ama_do_not_contact').strip()}
-            FROM hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting b
+            FROM hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting_dul b
             WHERE b.HCP_Durable_Id = :hcp_id
         """)
         df = pd.read_sql(sql, engine, params={"hcp_id": hcp_id})
@@ -273,7 +273,7 @@ def _load_hcps_from_db(db: Session, territory_id: str) -> Optional[List[dict]]:
                 City                 AS city,
                 State_Province       AS state,
                 Decile               AS decile_rank
-            FROM hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting
+            FROM hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting_dul
         """)
         df = pd.read_sql(sql, engine)
         if df.empty:
@@ -300,7 +300,7 @@ def _load_rx_pivot_from_db(db: Session, territory_id: str) -> Optional[pd.DataFr
                          THEN ISNULL(s.Total_Rx_Count, 0) ELSE 0 END) AS zenpep_rx,
                 SUM(CASE WHEN s.Brand_Name IN ('CREON','PANCREAZE')
                          THEN ISNULL(s.Total_Rx_Count, 0) ELSE 0 END) AS competitor_rx
-            FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting s
+            FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting_dul s
             WHERE CAST(s.Month_Ending_Date AS DATE) >= CAST(DATEADD(MONTH, -12, GETDATE()) AS DATE)
               AND s.HCP_Durable_Id IS NOT NULL
               AND s.sf_terr_pk_gi = :terr
@@ -322,7 +322,7 @@ def _load_calls_from_db(db: Session, territory_id: str, ref_date: date) -> Optio
     """90-day call stats per HCP. Returns None on any error.
 
     No Is_Reached column and no Call_Outcome column exist on
-    vw_tfact_callactivitydetails_zenpep_reporting (verified against
+    vw_tfact_callactivitydetails_zenpep_reporting_dul (verified against
     INFORMATION_SCHEMA.COLUMNS) — every logged call counts, and
     last_outcome always comes back None since there's no source column
     for it anywhere on this view."""
@@ -334,7 +334,7 @@ def _load_calls_from_db(db: Session, territory_id: str, ref_date: date) -> Optio
                 c.HCP_Durable_Id                      AS hcp_id,
                 MAX(TRY_CAST(c.Call_Date AS DATE))     AS last_call_date,
                 COUNT(c.Call_Id)                       AS call_count
-            FROM hub_insight360.vw_tfact_callactivitydetails_zenpep_reporting c
+            FROM hub_insight360.vw_tfact_callactivitydetails_zenpep_reporting_dul c
             WHERE c.sf_terr_pk_gi = :terr
               AND TRY_CAST(c.Call_Date AS DATE) >= :cutoff
             GROUP BY c.HCP_Durable_Id
@@ -425,7 +425,7 @@ def load_rx_for_territory(db, territory_id, year_q1, quarter_q1, year_q4, quarte
                 DATEPART(QUARTER, s.Month_Ending_Date) AS qtr,
                 SUM(CASE WHEN s.Brand_Name = 'ZENPEP' THEN ISNULL(s.Total_Rx_Count, 0) ELSE 0 END) AS zenpep_rx,
                 SUM(CASE WHEN s.Brand_Name IN ('CREON','PANCREAZE') THEN ISNULL(s.Total_Rx_Count, 0) ELSE 0 END) AS competitor_rx
-            FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting s
+            FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting_dul s
             WHERE s.HCP_Durable_Id IS NOT NULL
               AND (
                 (YEAR(s.Month_Ending_Date) = :yr1 AND DATEPART(QUARTER, s.Month_Ending_Date) = :q1)
@@ -471,7 +471,7 @@ def load_last_call_dates(db: Session, territory_id: str) -> dict:
         engine = db.bind
         sql = text("""
             SELECT HCP_Durable_Id AS hcp_id, MAX(Call_Date) AS last_call_date
-            FROM hub_insight360.vw_tfact_callactivitydetails_zenpep_reporting
+            FROM hub_insight360.vw_tfact_callactivitydetails_zenpep_reporting_dul
             WHERE sf_terr_pk_gi = :terr
             GROUP BY HCP_Durable_Id
         """)

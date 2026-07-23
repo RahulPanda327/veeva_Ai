@@ -5,9 +5,9 @@ from app.config import settings
 
 
 class HealthcarePractitioner(Base):
-    """Maps to vw_tdim_healthcarepractitioner_zenpep_reporting."""
+    """Maps to vw_tdim_healthcarepractitioner_zenpep_reporting_dul."""
 
-    __tablename__ = "vw_tdim_healthcarepractitioner_zenpep_reporting"
+    __tablename__ = "vw_tdim_healthcarepractitioner_zenpep_reporting_dul"
     __table_args__ = {"schema": settings.HUB_SCHEMA, "extend_existing": True}
 
     hcp_id = Column(String(50), primary_key=True)
@@ -32,9 +32,9 @@ class HealthcarePractitioner(Base):
 
 
 class PrescriberSales(Base):
-    """Maps to vw_tfact_prescribersales_zenpep_reporting."""
+    """Maps to vw_tfact_prescribersales_zenpep_reporting_dul."""
 
-    __tablename__ = "vw_tfact_prescribersales_zenpep_reporting"
+    __tablename__ = "vw_tfact_prescribersales_zenpep_reporting_dul"
     __table_args__ = {"schema": settings.HUB_SCHEMA, "extend_existing": True}
 
     record_id = Column(String(80), primary_key=True)
@@ -58,9 +58,9 @@ class PrescriberSales(Base):
 
 
 class CallActivity(Base):
-    """Maps to vw_tfact_callactivitydetails_zenpep_reporting."""
+    """Maps to vw_tfact_callactivitydetails_zenpep_reporting_dul."""
 
-    __tablename__ = "vw_tfact_callactivitydetails_zenpep_reporting"
+    __tablename__ = "vw_tfact_callactivitydetails_zenpep_reporting_dul"
     __table_args__ = {"schema": settings.HUB_SCHEMA, "extend_existing": True}
 
     call_id = Column(String(80), primary_key=True)
@@ -79,9 +79,9 @@ class CallActivity(Base):
 
 
 class TerritoryHierarchy(Base):
-    """Maps to vw_tdim_terr_hierarchy_zenpep_reporting."""
+    """Maps to vw_tdim_terr_hierarchy_zenpep_reporting_dul."""
 
-    __tablename__ = "vw_tdim_terr_hierarchy_zenpep_reporting"
+    __tablename__ = "vw_tdim_terr_hierarchy_zenpep_reporting_dul"
     __table_args__ = {"schema": settings.HUB_SCHEMA, "extend_existing": True}
 
     territory_id = Column("sf_terr_pk", String(100), primary_key=True)
@@ -99,9 +99,9 @@ class TerritoryHierarchy(Base):
 
 
 class Employee(Base):
-    """Maps to vw_tdim_employee_zenpep_reporting."""
+    """Maps to vw_tdim_employee_zenpep_reporting_dul."""
 
-    __tablename__ = "vw_tdim_employee_zenpep_reporting"
+    __tablename__ = "vw_tdim_employee_zenpep_reporting_dul"
     __table_args__ = {"schema": settings.HUB_SCHEMA, "extend_existing": True}
 
     rep_id = Column(String(50), primary_key=True)

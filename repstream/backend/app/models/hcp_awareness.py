@@ -1,14 +1,15 @@
-"""SQLAlchemy model for insight360_hcp_awareness (read-only)."""
+"""SQLAlchemy model for insight360_hcp_awareness_dul (read-only)."""
 from sqlalchemy import Column, String
 from app.database import Base
 from app.config import settings
 
 
 class HCPAwareness(Base):
-    __tablename__ = "insight360_hcp_awareness"
+    __tablename__ = "insight360_hcp_awareness_dul"
     __table_args__ = {"schema": settings.HUB_SCHEMA, "extend_existing": True}
 
     hcp_id             = Column("HCP_Durable_Id",         String(50),  primary_key=True)
+    territory_id       = Column("Territory_Durable_Id",   String(50),  index=True)
     hcp_full_name      = Column("HCP_Full_Name",          String(200))
     specialty          = Column("Specialty",              String(100))
     city_state         = Column("City_State",             String(200))

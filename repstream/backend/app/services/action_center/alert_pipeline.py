@@ -3,7 +3,7 @@ Alert pipeline — orchestrates the full detection → enrichment → persist fl
 
   Step 1: alert_detector.py  — ML (IsolationForest + LinearRegression)
   Step 2: alert_enricher.py  — one GPT-4o call per alert
-  Step 3: persist            — write enriched alert to insight360_active_alerts
+  Step 3: persist            — write enriched alert to insight360_active_alerts_dul
 """
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def run_pipeline(db: Session, territory_id: str) -> List[dict]:
     Full pipeline for a territory:
       1. ML detection on prescriber sales data
       2. GPT-4o enrichment (one call per detected alert)
-      3. Persist to insight360_active_alerts
+      3. Persist to insight360_active_alerts_dul
 
     Returns summary of generated alerts.
     """

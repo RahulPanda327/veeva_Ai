@@ -2,13 +2,20 @@
 import logging
 import threading
 from datetime import date, datetime, timezone
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.schemas.territory_prioritization import HCPInsightResponse, HCPRankedItem, TerritorySummary
+from app.services.filters_service import (
+    FilterSelection,
+    filter_params,
+    get_org_filters,
+    resolve_territories,
+    salesforce_of,
+)
 from app.services.territory_prioritization.ai_score import enrich_all_hcps
 from app.services.territory_prioritization.data_ingestion import (
     get_current_and_prior_quarter,
@@ -64,6 +71,32 @@ def _maybe_warm_insights_async(territory_id: str, ranked: List[dict]) -> None:
 def _quarter_label(year: int, q: int) -> str:
     months = {1: "Jan - Mar", 2: "Apr - Jun", 3: "Jul - Sep", 4: "Oct - Dec"}
     return f"Q{q} {year} ({months[q]})"
+
+
+def _ranked_for_selection(
+    db: Session,
+    rep_territory: str,
+    ref_date: date,
+    sel: FilterSelection,
+) -> tuple[List[dict], str]:
+    """Resolve a manager/employee/territory selection to its territories, load the
+    ranked HCPs for each, and return (combined_deduped_hcps, scope_label).
+
+    Falls back to the rep's own territory when nothing is selected."""
+    sf = salesforce_of(rep_territory)
+    territories = resolve_territories(db, sf, sel)
+    if not territories:
+        territories = [rep_territory]
+
+    combined: List[dict] = []
+    seen: set[str] = set()
+    for terr in territories:
+        for hcp in _get_ranked_hcps(db, terr, ref_date):
+            if hcp["hcp_id"] in seen:
+                continue
+            seen.add(hcp["hcp_id"])
+            combined.append(hcp)
+    return combined, ",".join(territories)
 
 
 def _get_ranked_hcps(db: Session, territory_id: str, ref_date: date) -> List[dict]:
@@ -167,23 +200,34 @@ async def get_territory_summary(
     rep: RepIdentity = Depends(get_current_rep),
     db: Session = Depends(get_db),
 ):
-    """KPI tiles: total HCPs, High/Med/Low counts, weekly target, last refresh."""
+    """KPI tiles: total HCPs, High/Med/Low counts, weekly target, last refresh.
+
+    Always returns the rep's own tiles plus the manager → employee → territory
+    `filters` tree the UI uses to build the cascading dropdowns. Selection is
+    applied on the data endpoints (e.g. /hcp-list?territory_id=), not here.
+    """
     today = date.today()
+    sf = salesforce_of(rep.territory_id)
     ranked = _get_ranked_hcps(db, rep.territory_id, today)
     (yr1, q1), _ = get_current_and_prior_quarter(today)
     period  = _quarter_label(yr1, q1)
     summary = build_territory_summary(ranked, rep.territory_id, rep.territory_id, period)
     summary["last_refresh"] = datetime.now(timezone.utc).strftime("%b %d, %Y")
+    summary["filters"] = get_org_filters(db, sf)
     return TerritorySummary(**summary)
 
 
 @router.get("/hcp-list", response_model=List[HCPRankedItem])
 async def get_hcp_list(
+    sel: FilterSelection = Depends(filter_params),
     rep: RepIdentity = Depends(get_current_rep),
     db: Session = Depends(get_db),
 ):
-    """Ranked HCP list with AI scores, predictive analytics, NLP classification, and GPT-4o insights."""
-    ranked = _get_ranked_hcps(db, rep.territory_id, date.today())
+    """Ranked HCP list with AI scores, predictive analytics, NLP classification, and GPT-4o insights.
+
+    Scope with any of ?manager_id=/?employee_id=/?territory_id= or the matching
+    ?manager_name=/?employee_name=/?territory_name= (id or name, case-insensitive)."""
+    ranked, _ = _ranked_for_selection(db, rep.territory_id, date.today(), sel)
     return [HCPRankedItem(**h) for h in ranked]
 
 
@@ -207,7 +251,7 @@ async def get_hcp_profile_view(
     rep: RepIdentity = Depends(get_current_rep),
     db: Session = Depends(get_db),
 ):
-    """View Profile button: full HCP dimension details from vw_tdim_healthcarepractitioner_zenpep_reporting."""
+    """View Profile button: full HCP dimension details from vw_tdim_healthcarepractitioner_zenpep_reporting_dul."""
     profile = get_hcp_profile(db, hcp_id)
     if profile is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"HCP {hcp_id} not found")

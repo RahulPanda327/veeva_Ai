@@ -1,4 +1,4 @@
-Table Name: hub_insight360.insight360_objection_handler
+Table Name: hub_insight360.insight360_objection_handler_dul
 
 Purpose:
 This table stores NLP-detected objections from field call transcripts. Each row represents a
@@ -87,5 +87,5 @@ Purpose / Business Use   : Links rep to the physical or digital supporting mater
 
 ---
 
-NOTE: Territory is NOT stored directly in this table. Join to insight360_call_transcripts
+NOTE: Territory is NOT stored directly in this table. Join to insight360_call_transcripts_dul
 via Call_Transcript_Id to get Territory_Durable_Id (see KPI 10 in sql_query_kpi_7to19.sql).

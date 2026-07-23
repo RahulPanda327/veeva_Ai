@@ -348,19 +348,25 @@ _SAMPLE_CI_ROWS = [
 
 def get_competitive_intel(
     db: Session,
-    territory_id: Optional[str] = None,
+    territory_ids: Optional[List[str]] = None,
     featured: bool = False,
 ) -> CompetitiveIntelResponse:
+    # territory_ids = bare Territory_Durable_Ids for a manager/employee/territory
+    # selection; None = the unfiltered default (all rows, sample fallback if empty).
     rows = []
+    filtered = bool(territory_ids)
     try:
         query = db.query(CompetitiveIntel)
-        rows = query.filter(CompetitiveIntel.territory_id == territory_id).all() if territory_id else []
-        if not rows:
+        if filtered:
+            rows = query.filter(CompetitiveIntel.territory_id.in_(territory_ids)).all()
+        else:
             rows = query.all()
     except Exception as e:
         log.warning("Competitive intel DB query failed (%s), using sample data", e)
 
-    if not rows:
+    # Sample fallback only for the unfiltered default — a filtered selection with
+    # no matching rows is a valid empty result, not a reason to show sample data.
+    if not rows and not filtered:
         log.info("No competitive intel rows — using sample data")
         rows = _SAMPLE_CI_ROWS  # type: ignore[assignment]
 

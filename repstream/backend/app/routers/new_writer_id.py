@@ -1,14 +1,27 @@
 """Module 2 — New Writer Identification API endpoints."""
+import json
 import logging
+import os
 import threading
+import time
 from datetime import date
-from typing import List
+from pathlib import Path
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.schemas.new_writer import ApproachBriefResponse, NewWriterCandidate, NewWriterListResponse
+from app.services.filters_service import (
+    FilterSelection,
+    filter_params,
+    get_org_filters,
+    hcps_for_territories,
+    normalize_territory_id,
+    resolve_territories,
+    salesforce_of,
+)
 from app.services.new_writer_id.approach_brief import (
     attach_approach_briefs,
     attach_warm_approaches,
@@ -20,7 +33,11 @@ from app.services.new_writer_id.approach_brief import (
 )
 from app.services.new_writer_id.icd10_matching import enrich_with_icd10
 from app.services.new_writer_id.match_scoring import enrich_with_peer_match
-from app.services.new_writer_id.non_writer_detection import detect_non_writers, enrich_with_hcp_dimensions
+from app.services.new_writer_id.non_writer_detection import (
+    detect_new_writers_for_hcps,
+    detect_non_writers,
+    enrich_with_hcp_dimensions,
+)
 from app.services.territory_prioritization.data_ingestion import get_current_and_prior_quarter
 from app.utils.auth import RepIdentity, get_current_rep
 from app.utils.cache import cache_get, cache_set, territory_cache_key
@@ -68,16 +85,20 @@ def _build_badges(c: dict) -> List[str]:
     return badges
 
 
-def _get_candidates(db: Session, territory_id: str) -> List[dict]:
-    cache_key = territory_cache_key("new_writers:candidates_v3", territory_id)
-    cached = cache_get(cache_key)
-    if cached:
-        return cached
+def _enrich_candidates(
+    db: Session, raw: List[dict], territory_id: str, block_on_ai: bool = False
+) -> List[dict]:
+    """Shared enrichment chain (ICD-10, peer match, warm approach, badges) —
+    territory_id here is only a label threaded through to the enrichment
+    functions' signatures; none of them actually filter by it (peer_network's
+    load_peer_matches already scopes to the candidates' own hcp_ids).
 
-    (yr1, q1), (yr4, q4) = get_current_and_prior_quarter(date.today())
-
-    # Detect + enrich (raw SQL join or sample fallback)
-    raw      = detect_non_writers(db, territory_id, yr1, q1, yr4, q4)
+    block_on_ai=True waits for GPT-4o warm-approach/brief generation to finish
+    before returning, instead of the normal fire-and-forget background warmer.
+    Used only by the startup pre-warm pass (see warm_all_territory_candidates)
+    so the per-territory cache is stored fully populated — never with nulls
+    the UI would otherwise see on a request that lands before background
+    warming finishes."""
     enriched = enrich_with_hcp_dimensions(db, raw, territory_id)
     enriched = enrich_with_icd10(enriched)
     enriched = enrich_with_peer_match(db, enriched, territory_id)
@@ -103,24 +124,182 @@ def _get_candidates(db: Session, territory_id: str) -> List[dict]:
         c["ai_approach_highlight"] = None
     attach_warm_approaches(enriched)
     attach_approach_briefs(enriched)
-    _maybe_warm_approaches_async(territory_id, enriched)
+
+    if block_on_ai:
+        warm_approaches(enriched)
+        warm_approach_briefs(enriched)
+        attach_warm_approaches(enriched)
+        attach_approach_briefs(enriched)
+    else:
+        _maybe_warm_approaches_async(territory_id, enriched)
 
     # Build badges
     for c in enriched:
         c["analysis_badges"] = _build_badges(c)
         c["ai_is_identified"] = True
 
+    return enriched
+
+
+def _get_candidates(db: Session, territory_id: str) -> List[dict]:
+    """Default (unfiltered) candidate list — the small, curated KPI-7
+    insight360_peer_match_dul set. This module was never territory-scoped
+    by default; see _get_candidates_for_hcp_set for the live, per-territory
+    derivation used when a manager/employee/territory filter is given."""
+    cache_key = territory_cache_key("new_writers:candidates_v3", territory_id)
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+
+    (yr1, q1), (yr4, q4) = get_current_and_prior_quarter(date.today())
+
+    raw = detect_non_writers(db, territory_id, yr1, q1, yr4, q4)
+    enriched = _enrich_candidates(db, raw, territory_id)
+
     cache_set(cache_key, enriched, ttl=_CACHE_TTL)
     return enriched
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-territory candidate cache — persisted to disk as JSON, same style as the
+# GPT-4o warm-approach / approach-brief caches (approach_brief.py).
+#
+# Flow: on startup, warm_all_territory_candidates() CLEARS this, regenerates
+# every territory's candidate list (live Synapse detection + full GPT-4o
+# enrichment, blocking so nothing is null), and writes it to
+# .new_writer_candidates_cache.json. At request time the filter reads ONLY from
+# this cache (in memory, loaded from that JSON) — it never regenerates at the
+# application level. A manager/employee selection is served by unioning the
+# already-warmed territory lists.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_CANDIDATE_CACHE_FILE = Path(__file__).resolve().parents[2] / ".new_writer_candidates_cache.json"
+_CANDIDATE_CACHE: dict[str, List[dict]] = {}   # bare territory_id -> enriched candidates
+_candidate_io_lock = threading.Lock()
+
+
+def _load_candidate_cache() -> None:
+    try:
+        with open(_CANDIDATE_CACHE_FILE, encoding="utf-8") as f:
+            _CANDIDATE_CACHE.update(json.load(f))
+        logger.info("Loaded New Writer candidates for %d territories from %s",
+                    len(_CANDIDATE_CACHE), _CANDIDATE_CACHE_FILE.name)
+    except FileNotFoundError:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not load New Writer candidate cache (%s).", exc)
+
+
+def _save_candidate_cache() -> None:
+    try:
+        with _candidate_io_lock:
+            tmp = _CANDIDATE_CACHE_FILE.with_suffix(".json.tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(_CANDIDATE_CACHE, f, default=str)
+            os.replace(tmp, _CANDIDATE_CACHE_FILE)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not save New Writer candidate cache (%s).", exc)
+
+
+_load_candidate_cache()
+
+
+def _generate_candidates_for_territory(db: Session, territory_id: str, sf: str) -> List[dict]:
+    """Live-detect + fully enrich (blocking on GPT-4o) the candidates for ONE
+    real territory. Generation only — used by the startup warm-up; the request
+    path never calls this, it reads the cache."""
+    hcp_ids = hcps_for_territories(db, [normalize_territory_id(territory_id, sf)])
+    if not hcp_ids:
+        return []
+    (yr1, q1), _ = get_current_and_prior_quarter(date.today())
+    raw = detect_new_writers_for_hcps(db, hcp_ids, yr1, q1)
+    if not raw:
+        return []
+    return _enrich_candidates(db, raw, territory_id, block_on_ai=True)
+
+
+def warm_all_territory_candidates(db: Session, max_workers: int = 3) -> None:
+    """Startup warm-up: CLEAR the previous candidate cache, regenerate every
+    territory's list fresh (live detection + full GPT-4o enrichment), and save
+    it to .new_writer_candidates_cache.json — so the filter can serve straight
+    from that JSON without regenerating.
+
+    Must run IN-PROCESS (see main.py's startup thread) so it populates THIS
+    running server's _CANDIDATE_CACHE, not a subprocess's separate copy.
+    Regeneration is fast after the first run because the per-HCP GPT-4o text
+    (warm approach + email) is itself disk-cached by hcp_id in approach_brief.py
+    — so a restart re-runs the Synapse queries + GPT cache hits, not fresh
+    GPT-4o calls. Territories run a few at a time, each with its own DB session
+    (SQLAlchemy sessions aren't thread-safe)."""
+    from concurrent.futures import ThreadPoolExecutor
+    from app.database import SessionLocal
+
+    sf = salesforce_of(None)
+    tree = get_org_filters(db, sf)
+    territory_ids = sorted({
+        t["territory_id"]
+        for m in tree.get("manager_id", [])
+        for e in m["employee_id"]
+        for t in e["territory_id"]
+    })
+
+    # Clear the previous cache first (per the "restart clears + regenerates" flow)
+    with _candidate_io_lock:
+        _CANDIDATE_CACHE.clear()
+
+    logger.info("Warming New Writer ID candidates for %d territories (%d at a time)...",
+                len(territory_ids), max_workers)
+    start = time.time()
+
+    def _warm_one(terr: str) -> None:
+        worker_db = SessionLocal()
+        try:
+            candidates = _generate_candidates_for_territory(worker_db, terr, sf)
+            with _candidate_io_lock:
+                _CANDIDATE_CACHE[terr] = candidates
+            logger.info("  %s: %d candidates warmed.", terr, len(candidates))
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to warm New Writer candidates for territory %s", terr)
+        finally:
+            worker_db.close()
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        list(pool.map(_warm_one, territory_ids))
+
+    _save_candidate_cache()
+    logger.info("New Writer ID territory warm-up done in %.1fs (%d territories in JSON).",
+                time.time() - start, len(_CANDIDATE_CACHE))
+
+
 @router.get("/candidates", response_model=List[NewWriterCandidate])
 async def get_new_writer_candidates(
+    sel: FilterSelection = Depends(filter_params),
     rep: RepIdentity = Depends(get_current_rep),
     db: Session = Depends(get_db),
 ):
-    """Non-writer candidates with ML peer match, ICD-10 matching, and AI warm approach."""
-    return [NewWriterCandidate(**c) for c in _get_candidates(db, rep.territory_id)]
+    """Non-writer candidates with ML peer match, ICD-10 matching, and AI warm approach.
+
+    Pass manager_id/employee_id/territory_id to scope candidates to that
+    territory's real HCP population; unfiltered returns the default KPI-7 list."""
+    if not sel.is_empty():
+        sf = salesforce_of(rep.territory_id)
+        territories = resolve_territories(db, sf, sel) or []
+        bare_terrs = sorted({t.split("|")[-1] for t in territories})
+
+        # Read ONLY from the warmed JSON cache — never regenerate at request time.
+        merged: dict[str, dict] = {}
+        with _candidate_io_lock:
+            for terr in bare_terrs:
+                for c in _CANDIDATE_CACHE.get(terr, []):
+                    merged[c["hcp_id"]] = c
+        # Re-cap to the top 10 by competitor Rx volume across the whole
+        # selection — same "highest-value targets first" intent as a single
+        # territory, whether the scope is one territory or a manager's 8.
+        candidates = sorted(merged.values(), key=lambda c: -(c.get("in_class_rx_q1") or 0))[:10]
+    else:
+        candidates = _get_candidates(db, rep.territory_id)
+
+    return [NewWriterCandidate(**c) for c in candidates]
 
 
 @router.post("/{hcp_id}/approach-brief", response_model=ApproachBriefResponse)

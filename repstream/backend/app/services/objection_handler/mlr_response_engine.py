@@ -1,6 +1,6 @@
 """MLR-approved responses and sample data for Objection Handler (Module 3).
 
-Falls back to representative sample data when insight360_objection_handler is unavailable.
+Falls back to representative sample data when insight360_objection_handler_dul is unavailable.
 """
 from __future__ import annotations
 
@@ -166,7 +166,7 @@ def _frequency_label(call_count: int) -> FrequencyLabel:
 
 def _combine_materials(mlr_response: Optional[str], sku: Optional[str]) -> Optional[str]:
     """ai_supporting_materials = the real MLR response + its SKU, combined.
-    Both values come straight from insight360_objection_handler
+    Both values come straight from insight360_objection_handler_dul
     (MLR_Approved_Response + MLR_SKU_Code) — no hardcoded material names."""
     response = (mlr_response or "").strip()
     sku = (sku or "").strip()
@@ -190,14 +190,24 @@ def _nlp_badges(row: Dict) -> List[str]:
 
 def load_all_objections(
     db: Session,
-    territory_id: str,
+    territory_ids: Optional[List[str]] = None,
     period: Optional[str] = None,
 ) -> List[Dict]:
-    """Load objections from DB with AI enrichment. Falls back to sample data."""
+    """Load objections from DB with AI enrichment. Falls back to sample data.
+
+    territory_ids (bare Territory_Durable_Ids) filters on the table's own
+    Territory_Durable_Id column; None = all (the unfiltered default)."""
+    filtered = bool(territory_ids)
     try:
-        # insight360_objection_handler has no territory_id column (KPI 10 joins via call_transcripts)
-        stmt = select(ObjectionHandler).order_by(ObjectionHandler.call_count_mentions.desc())
+        stmt = select(ObjectionHandler)
+        if filtered:
+            stmt = stmt.where(ObjectionHandler.territory_id.in_(territory_ids))
+        stmt = stmt.order_by(ObjectionHandler.call_count_mentions.desc())
         rows = list(db.scalars(stmt).all())
+
+        # Filtered selection with no matching rows is a valid empty result.
+        if not rows and filtered:
+            return []
 
         if rows:
             result = []
@@ -212,7 +222,7 @@ def load_all_objections(
                     "objection_type":        r.objection_category or "",
                     "objection_text":        r.objection_text or "",
                     "period":                r.detection_period or "",
-                    "territory_id":          territory_id,
+                    "territory_id":          r.territory_id or "",
                     "hcp_segment":           None,
                     "call_date":             r.call_date or "",
                     "ai_call_count":         raw_count,
@@ -229,14 +239,10 @@ def load_all_objections(
     except Exception as exc:
         log.warning("Objection DB load failed (%s), using sample data.", exc)
 
-    # Fallback — filter sample by territory (always matches TERR-001 in dev)
-    fallback = [dict(o) for o in _SAMPLE_OBJECTIONS]
-    if territory_id and territory_id != "TERR-001":
-        # Give generic data for other territories
-        for o in fallback:
-            o["territory_id"] = territory_id
+    # Fallback — sample objections (only reached for the unfiltered default;
+    # a filtered selection with no rows already returned [] above).
     log.info("Using sample objection data.")
-    return fallback
+    return [dict(o) for o in _SAMPLE_OBJECTIONS]
 
 
 def get_best_mlr_response(db: Session, objection_id: str) -> Optional[Dict]:

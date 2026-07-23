@@ -1,4 +1,4 @@
-Table Name: hub_insight360.insight360_payer_access
+Table Name: hub_insight360.insight360_payer_access_dul
 
 Purpose:
 This table stores payer access and formulary intelligence data. It tracks payer coverage status, formulary changes, authorization requirements, patient impact, and recommended business actions to support market access and field engagement strategies.

@@ -2,6 +2,8 @@
 from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
+from app.schemas.filters import OrgFilters
+
 
 class HCPViewProfile(BaseModel):
     formatted_name: Optional[str] = None
@@ -30,6 +32,9 @@ class TerritorySummary(BaseModel):
     last_refresh: str
     territory_id: str
     territory_name: Optional[str] = None
+    filters: Optional[OrgFilters] = Field(
+        default=None, description="Manager → employee → territory tree for the filter dropdowns"
+    )
 
 
 class HCPRankedItem(BaseModel):

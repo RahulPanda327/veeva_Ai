@@ -1,7 +1,7 @@
 """Warm approach generation for new writer candidates (Module 2).
 
 List view: GPT-4o warm approach per HCP from their real data — background-warmed,
-persisted to disk. DB Warm_Approach_Text (insight360_peer_match) wins when present.
+persisted to disk. DB Warm_Approach_Text (insight360_peer_match_dul) wins when present.
 On-demand: GPT-4o full brief via 'Generate Approach Brief' button.
 """
 from __future__ import annotations

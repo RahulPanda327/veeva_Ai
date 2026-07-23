@@ -1,4 +1,4 @@
-"""SQLAlchemy model for hub_insight360.insight360_active_alerts (read-only).
+"""SQLAlchemy model for hub_insight360.insight360_active_alerts_dul (read-only).
 
 Column names verified against live Azure Synapse DB on 2026-06-19.
 """
@@ -8,7 +8,7 @@ from app.config import settings
 
 
 class ActiveAlert(Base):
-    __tablename__ = "insight360_active_alerts"
+    __tablename__ = "insight360_active_alerts_dul"
     __table_args__ = {"schema": settings.HUB_SCHEMA, "extend_existing": True}
 
     # Real DB column        Python attribute

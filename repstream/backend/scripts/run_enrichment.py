@@ -37,7 +37,7 @@ from app.services.action_center.alert_enricher import enrich_alert
 Base = declarative_base()
 
 class AlertRow(Base):
-    __tablename__ = "insight360_active_alerts"
+    __tablename__ = "insight360_active_alerts_dul"
 
     alert_id                  = Column(String(80), primary_key=True)
     alert_type                = Column(String(50))

@@ -9,10 +9,23 @@ import logging
 from typing import Dict, List, Optional
 
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 log = logging.getLogger(__name__)
+
+# SQL Server / ODBC caps a single query at ~2100 bound parameters — a
+# manager_id can resolve to thousands of HCPs, so live detection batches
+# hcp_ids into chunks and concatenates results in Python.
+_HCP_ID_BATCH_SIZE = 1800
+# Top N by competitor Rx volume, not a raw row cap — matches the "highest-value
+# conversion targets first" framing the unscoped KPI-7 list already implied.
+_NEW_WRITER_CAP = 10
+
+
+def _chunks(items: List[str], size: int) -> List[List[str]]:
+    ordered = sorted(items)
+    return [ordered[i:i + size] for i in range(0, len(ordered), size)]
 
 
 def _latest_quarter_with_data(engine) -> Optional[tuple]:
@@ -26,7 +39,7 @@ def _latest_quarter_with_data(engine) -> Optional[tuple]:
         df = pd.read_sql(
             text("""
                 SELECT MAX(TRY_CAST(Month_Ending_Date AS DATE)) AS max_dt
-                FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting
+                FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting_dul
             """),
             engine,
         )
@@ -42,7 +55,7 @@ def _latest_quarter_with_data(engine) -> Optional[tuple]:
 def _query_non_writers(
     engine, territory_id: str, year_q1: int, quarter_q1: int, year_q4: int, quarter_q4: int
 ) -> pd.DataFrame:
-    # KPI-7-driven candidate list: insight360_peer_match IS the curated set of
+    # KPI-7-driven candidate list: insight360_peer_match_dul IS the curated set of
     # "likely to start prescribing" HCPs (per the user's CTE query). Enriched with
     # live HCP dim + territory hierarchy + per-HCP Rx aggregates (pre-aggregated
     # in the rx CTE to avoid the fact-table fan-out of a raw join).
@@ -67,8 +80,8 @@ def _query_non_writers(
                           AND ISNULL(TRY_CAST(s.New_Rx_Count AS FLOAT), 0) > 0
                      THEN TRY_CAST(s.Week_Ending_Date AS DATE) END) AS last_nrx_date,
                 MAX(CASE WHEN s.Brand_Name != 'ZENPEP' THEN s.Brand_Name END) AS competitor_brand
-            FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting s
-            WHERE s.HCP_Durable_Id IN (SELECT HCP_Durable_Id FROM hub_insight360.insight360_peer_match)
+            FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting_dul s
+            WHERE s.HCP_Durable_Id IN (SELECT HCP_Durable_Id FROM hub_insight360.insight360_peer_match_dul)
             GROUP BY s.HCP_Durable_Id
         )
         SELECT
@@ -85,13 +98,13 @@ def _query_non_writers(
             rx.brand_rx_q4,
             rx.last_nrx_date,
             rx.competitor_brand
-        FROM hub_insight360.insight360_peer_match pm
-        LEFT JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting h
+        FROM hub_insight360.insight360_peer_match_dul pm
+        LEFT JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting_dul h
                ON h.HCP_Durable_Id = pm.HCP_Durable_Id
-        LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting at2
+        LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting_dul at2
                ON at2.HCP_Durable_Id = pm.HCP_Durable_Id
               AND at2.sales_force = 'Commercial_Sales_Field_Force'
-        LEFT JOIN hub_insight360.vw_tdim_terr_hierarchy_zenpep_reporting tm
+        LEFT JOIN hub_insight360.vw_tdim_terr_hierarchy_zenpep_reporting_dul tm
                ON tm.Territory_Durable_Id = at2.Territory_Durable_Id
         LEFT JOIN rx
                ON rx.HCP_Durable_Id = pm.HCP_Durable_Id
@@ -102,14 +115,25 @@ def _query_non_writers(
     })
 
 
-def _query_top5_by_brand(engine, year: int, quarter: int) -> Dict[str, List[Dict]]:
-    """Top 5 in-class brands by Rx volume per peer-match HCP, over the trailing
-    4 quarters ending at the effective quarter (single quarters are too sparse —
-    HCPs quiet for one quarter would show an empty brand table)."""
+def _query_top5_by_brand(
+    engine, year: int, quarter: int, hcp_ids: Optional[set] = None
+) -> Dict[str, List[Dict]]:
+    """Top 5 in-class brands by Rx volume per HCP, over the trailing 4 quarters
+    ending at the effective quarter (single quarters are too sparse — HCPs quiet
+    for one quarter would show an empty brand table).
+
+    hcp_ids, when given, scopes to that explicit set instead of the
+    insight360_peer_match_dul KPI-7 list — used by the live per-territory
+    detection path. Assumed already capped to a few hundred HCPs (the caller
+    applies _NEW_WRITER_CAP first), so no batching needed here."""
     q_start_month = 3 * quarter - 2
     win_end   = pd.Timestamp(year, q_start_month, 1) + pd.DateOffset(months=3) - pd.DateOffset(days=1)
     win_start = pd.Timestamp(year, q_start_month, 1) - pd.DateOffset(months=9)
-    sql = text("""
+    hcp_filter = (
+        "s.HCP_Durable_Id IN :hcp_ids" if hcp_ids is not None
+        else "s.HCP_Durable_Id IN (SELECT HCP_Durable_Id FROM hub_insight360.insight360_peer_match_dul)"
+    )
+    sql = text(f"""
         WITH ranked AS (
             SELECT
                 s.HCP_Durable_Id AS hcp_id,
@@ -119,21 +143,139 @@ def _query_top5_by_brand(engine, year: int, quarter: int) -> Dict[str, List[Dict
                     PARTITION BY s.HCP_Durable_Id
                     ORDER BY SUM(ISNULL(TRY_CAST(s.Total_Rx_Count AS FLOAT), 0)) DESC
                 ) AS rn
-            FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting s
-            WHERE s.HCP_Durable_Id IN (SELECT HCP_Durable_Id FROM hub_insight360.insight360_peer_match)
+            FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting_dul s
+            WHERE {hcp_filter}
               AND s.Brand_Name != 'ZENPEP' AND s.Brand_Name IS NOT NULL
               AND TRY_CAST(s.Month_Ending_Date AS DATE) BETWEEN :win_start AND :win_end
             GROUP BY s.HCP_Durable_Id, s.Brand_Name
         )
         SELECT hcp_id, brand, rx FROM ranked WHERE rn <= 5 ORDER BY hcp_id, rn
     """)
-    df = pd.read_sql(sql, engine, params={
-        "win_start": win_start.strftime("%Y-%m-%d"), "win_end": win_end.strftime("%Y-%m-%d"),
-    })
+    params = {"win_start": win_start.strftime("%Y-%m-%d"), "win_end": win_end.strftime("%Y-%m-%d")}
+    if hcp_ids is not None:
+        sql = sql.bindparams(bindparam("hcp_ids", expanding=True))
+        params["hcp_ids"] = sorted(hcp_ids)
+    df = pd.read_sql(sql, engine, params=params)
     result: Dict[str, List[Dict]] = {}
     for row in df.to_dict("records"):
         result.setdefault(row["hcp_id"], []).append({"brand": row["brand"], "rx": int(row["rx"])})
     return result
+
+
+_LIVE_DETECTION_SQL = text("""
+    WITH rx_agg AS (
+        SELECT
+            s.HCP_Durable_Id,
+            SUM(CASE WHEN s.Brand_Name = 'ZENPEP'
+                     THEN ISNULL(TRY_CAST(s.Total_Rx_Count AS FLOAT), 0) ELSE 0 END) AS zenpep_rx,
+            SUM(CASE WHEN s.Brand_Name != 'ZENPEP' AND s.Brand_Name IS NOT NULL
+                     THEN ISNULL(TRY_CAST(s.Total_Rx_Count AS FLOAT), 0) ELSE 0 END) AS in_class_rx,
+            MAX(CASE WHEN s.Brand_Name != 'ZENPEP'
+                      AND ISNULL(TRY_CAST(s.New_Rx_Count AS FLOAT), 0) > 0
+                 THEN TRY_CAST(s.Week_Ending_Date AS DATE) END) AS last_nrx_date,
+            MAX(CASE WHEN s.Brand_Name != 'ZENPEP' THEN s.Brand_Name END) AS competitor_brand
+        FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting_dul s
+        WHERE s.HCP_Durable_Id IN :hcp_ids
+        GROUP BY s.HCP_Durable_Id
+        HAVING SUM(CASE WHEN s.Brand_Name = 'ZENPEP'
+                       THEN ISNULL(TRY_CAST(s.Total_Rx_Count AS FLOAT), 0) ELSE 0 END) = 0
+           AND SUM(CASE WHEN s.Brand_Name != 'ZENPEP' AND s.Brand_Name IS NOT NULL
+                       THEN ISNULL(TRY_CAST(s.Total_Rx_Count AS FLOAT), 0) ELSE 0 END) > 0
+    ),
+    hcp_territory AS (
+        -- Deduped 1-row-per-HCP: the bridge table can have multiple rows per
+        -- HCP (history/duplication, same pattern seen elsewhere in this
+        -- warehouse), so a plain join would fan out rx_agg's rows.
+        SELECT HCP_Durable_Id, MAX(Territory_Durable_Id) AS territory_id
+        FROM hub_insight360.vw_account_territory_zenpep_reporting_dul
+        WHERE sales_force = 'Commercial_Sales_Field_Force'
+        GROUP BY HCP_Durable_Id
+    )
+    SELECT
+        b.HCP_Durable_Id        AS hcp_id,
+        b.Formatted_Name        AS name,
+        b.Specialty_Description AS specialty,
+        b.City                  AS city,
+        b.State_Province        AS state,
+        b.Segment_Description   AS segment,
+        b.Email_1                AS email,
+        r.in_class_rx           AS in_class_rx_q1,
+        r.last_nrx_date,
+        r.competitor_brand,
+        ht.territory_id          AS territory_id
+    FROM rx_agg r
+    JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting_dul b
+      ON b.HCP_Durable_Id = r.HCP_Durable_Id
+    LEFT JOIN hcp_territory ht
+      ON ht.HCP_Durable_Id = r.HCP_Durable_Id
+""").bindparams(bindparam("hcp_ids", expanding=True))
+
+
+def detect_new_writers_for_hcps(
+    db: Session,
+    hcp_ids: set,
+    year_q1: int,
+    quarter_q1: int,
+) -> List[Dict]:
+    """Live per-territory new-writer detection — unlike detect_non_writers()
+    (which filters the small pre-computed insight360_peer_match_dul KPI-7
+    list, ~10 rows DB-wide), this derives candidates directly from Rx
+    history for an explicit HCP_Durable_Id set (resolved via
+    filters_service.resolve_territories + hcps_for_territories for a
+    manager_id/employee_id/territory_id filter): any HCP with zero ZENPEP Rx
+    but positive in-class (competitor) Rx — i.e. actively treating the
+    condition but not yet on our brand. Returns the top _NEW_WRITER_CAP (10)
+    by in-class Rx volume — the highest-value conversion targets, same
+    intent as the unscoped KPI-7 list's small curated size. Returns [] if
+    hcp_ids is empty or nothing matches — no fallback.
+    """
+    if not hcp_ids:
+        return []
+    try:
+        engine = db.bind
+
+        frames = []
+        for batch in _chunks(list(hcp_ids), _HCP_ID_BATCH_SIZE):
+            df = pd.read_sql(_LIVE_DETECTION_SQL, engine, params={"hcp_ids": batch})
+            if not df.empty:
+                frames.append(df)
+
+        if not frames:
+            log.info("No live new-writer candidates found for this HCP set.")
+            return []
+
+        df = pd.concat(frames, ignore_index=True)
+        df = df.sort_values("in_class_rx_q1", ascending=False).head(_NEW_WRITER_CAP)
+        df = df.astype(object).where(df.notna(), None)
+
+        rows = df.to_dict("records")
+        candidate_ids = {r["hcp_id"] for r in rows}
+        top5_map = _query_top5_by_brand(engine, year_q1, quarter_q1, hcp_ids=candidate_ids)
+
+        for r in rows:
+            r["territory_id"]        = r.get("territory_id") or ""
+            r["brand_rx_q1"]         = 0.0   # zero by construction (HAVING zenpep_rx = 0)
+            r["brand_rx_q4"]         = 0.0
+            r["in_class_rx_q1"]      = float(r.get("in_class_rx_q1") or 0)
+            r["competitor_volume"]   = r["in_class_rx_q1"]
+            r["affiliated_hospital"] = ""
+            r["icd10_codes_raw"]     = ""
+            nbrx = r.get("last_nrx_date")
+            r["last_nrx_date"] = nbrx.strftime("%b %d, %Y") if nbrx is not None and not pd.isna(nbrx) else None
+            top5 = top5_map.get(r["hcp_id"], [])
+            r["top_5_in_class_rx"] = top5
+            if top5:
+                r["competitor_brand"]  = top5[0]["brand"]
+                r["total_in_class_rx"] = float(sum(b["rx"] for b in top5))
+                r["competitor_volume"] = r["total_in_class_rx"]
+            else:
+                r["total_in_class_rx"] = r["in_class_rx_q1"]
+
+        log.info("Derived %d live new-writer candidates for %d HCPs.", len(rows), len(hcp_ids))
+        return rows
+    except Exception as exc:
+        log.warning("Live new-writer detection failed (%s).", exc)
+        return []
 
 
 def detect_non_writers(

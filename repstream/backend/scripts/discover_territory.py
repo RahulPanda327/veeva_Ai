@@ -4,9 +4,9 @@ from app.database import engine
 from sqlalchemy import text
 
 views = [
-    "vw_tdim_healthcarepractitioner_zenpep_reporting",
-    "vw_tfact_prescribersales_zenpep_reporting",
-    "vw_tfact_callactivitydetails_zenpep_reporting",
+    "vw_tdim_healthcarepractitioner_zenpep_reporting_dul",
+    "vw_tfact_prescribersales_zenpep_reporting_dul",
+    "vw_tfact_callactivitydetails_zenpep_reporting_dul",
 ]
 
 for v in views:

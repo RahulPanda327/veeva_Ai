@@ -1,4 +1,4 @@
-Table Name: hub_insight360.insight360_hcp_awareness :
+Table Name: hub_insight360.insight360_hcp_awareness_dul :
 
 Purpose:
 This table stores Healthcare Professional (HCP) awareness and engagement trends over time. It tracks awareness score movement across multiple periods, identifies behavioral changes, determines engagement status, and provides insight into factors influencing HCP awareness levels.

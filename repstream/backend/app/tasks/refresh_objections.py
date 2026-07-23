@@ -29,7 +29,7 @@ def refresh_all_objections(self):
         territory_ids = _get_all_territory_ids(db)
         for territory_id in territory_ids:
             try:
-                rows = load_all_objections(db, territory_id, period)
+                rows = load_all_objections(db, [territory_id.split("|")[-1]], period)
                 result = [
                     {
                         "objection_id": r.objection_id,

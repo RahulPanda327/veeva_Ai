@@ -1,14 +1,15 @@
-"""SQLAlchemy model for insight360_payer_access (read-only)."""
+"""SQLAlchemy model for insight360_payer_access_dul (read-only)."""
 from sqlalchemy import Column, String
 from app.database import Base
 from app.config import settings
 
 
 class PayerAccess(Base):
-    __tablename__ = "insight360_payer_access"
+    __tablename__ = "insight360_payer_access_dul"
     __table_args__ = {"schema": settings.HUB_SCHEMA, "extend_existing": True}
 
     plan_id             = Column("Plan_Durable_Id",       String(80),  primary_key=True)
+    territory_id        = Column("Territory_Durable_Id",   String(50),  index=True)
     payer_name          = Column("Plan_Name",             String(200))
     mco_org_name        = Column("MCO_Organization_Name", String(200))
     channel_name        = Column("Channel_Name",          String(50))   # Commercial / Medicare / Medicaid

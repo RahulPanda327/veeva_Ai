@@ -21,7 +21,7 @@ from sqlalchemy import text
 try:
     with engine.connect() as conn:
         rows = conn.execute(
-            text(f"SELECT TOP 5 * FROM {settings.HUB_SCHEMA}.insight360_active_alerts")
+            text(f"SELECT TOP 5 * FROM {settings.HUB_SCHEMA}.insight360_active_alerts_dul")
         ).fetchall()
         print(f"Connected! Found {len(rows)} rows.")
         for r in rows:

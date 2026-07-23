@@ -3,13 +3,13 @@
   KPI 7-19 QUERIES – Veeva RepStream AI Modules
   Target: hub_insight360 schema (Server B)
   Cooked data tables used:
-    hub_insight360.insight360_peer_match
-    hub_insight360.insight360_objection_handler
-    hub_insight360.insight360_active_alerts
-    hub_insight360.insight360_hcp_awareness
-    hub_insight360.insight360_competitive_intel
-    hub_insight360.insight360_payer_access
-    hub_insight360.insight360_call_transcripts
+    hub_insight360.insight360_peer_match_dul
+    hub_insight360.insight360_objection_handler_dul
+    hub_insight360.insight360_active_alerts_dul
+    hub_insight360.insight360_hcp_awareness_dul
+    hub_insight360.insight360_competitive_intel_dul
+    hub_insight360.insight360_payer_access_dul
+    hub_insight360.insight360_call_transcripts_dul
 ================================================================================
 */
 
@@ -44,14 +44,14 @@ SELECT
     tm.District_Name,
     tm.Region_Name,
     CAST(GETDATE() AS DATE)                                 AS Report_As_Of_Date
-FROM hub_insight360.insight360_peer_match pm
+FROM hub_insight360.insight360_peer_match_dul pm
 -- Enrich with live dim data where available
-LEFT JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting h
+LEFT JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting_dul h
        ON h.HCP_Durable_Id = pm.HCP_Durable_Id
-LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting at2
+LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting_dul at2
        ON at2.HCP_Durable_Id = pm.HCP_Durable_Id
       AND at2.sales_force = 'Commercial_Sales_Field_Force'
-LEFT JOIN hub_insight360.vw_tdim_terr_hierarchy_zenpep_reporting tm
+LEFT JOIN hub_insight360.vw_tdim_terr_hierarchy_zenpep_reporting_dul tm
        ON tm.Territory_Durable_Id = at2.Territory_Durable_Id
 -- Remove REPLACE to convert percentage string to numeric for sorting
 ORDER BY
@@ -93,8 +93,8 @@ SELECT
     MIN(CAST(ct.Call_Date AS DATE))                         AS Earliest_Call_Date,
     MAX(CAST(ct.Call_Date AS DATE))                         AS Latest_Call_Date,
     CAST(GETDATE() AS DATE)                                 AS Report_As_Of_Date
-FROM hub_insight360.insight360_call_transcripts ct
-LEFT JOIN hub_insight360.vw_tdim_terr_hierarchy_zenpep_reporting th
+FROM hub_insight360.insight360_call_transcripts_dul ct
+LEFT JOIN hub_insight360.vw_tdim_terr_hierarchy_zenpep_reporting_dul th
        ON th.Territory_Durable_Id = ct.Territory_Durable_Id
 GROUP BY
     ct.Territory_Durable_Id,
@@ -128,7 +128,7 @@ SELECT
             AS DECIMAL(5,1)))
     AS DECIMAL(5,1))                                        AS Avg_Historical_Conversion_Rate_Pct,
     CAST(GETDATE() AS DATE)                                 AS Report_As_Of_Date
-FROM hub_insight360.insight360_objection_handler oh
+FROM hub_insight360.insight360_objection_handler_dul oh
 GROUP BY
     oh.Objection_Category,
     oh.Objection_Frequency_Label
@@ -173,14 +173,14 @@ SELECT
     h.Specialty_Description,
     h.City_State,
     CAST(GETDATE() AS DATE)                                 AS Report_As_Of_Date
-FROM hub_insight360.insight360_objection_handler oh
+FROM hub_insight360.insight360_objection_handler_dul oh
 -- Join to transcripts to get territory
-LEFT JOIN hub_insight360.insight360_call_transcripts ct
+LEFT JOIN hub_insight360.insight360_call_transcripts_dul ct
        ON ct.Src_Call_Id = oh.Call_Transcript_Id
-LEFT JOIN hub_insight360.vw_tdim_terr_hierarchy_zenpep_reporting th
+LEFT JOIN hub_insight360.vw_tdim_terr_hierarchy_zenpep_reporting_dul th
        ON th.Territory_Durable_Id = ct.Territory_Durable_Id
 -- Enrich HCP context
-LEFT JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting h
+LEFT JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting_dul h
        ON h.HCP_Durable_Id = oh.HCP_Durable_Id
 ORDER BY
     CAST(oh.Call_Date AS DATE) DESC,
@@ -207,7 +207,7 @@ SELECT
     oh.Call_Count_Mentions                                  AS Times_Encountered,
     oh.Detection_Period,
     CAST(GETDATE() AS DATE)                                 AS Report_As_Of_Date
-FROM hub_insight360.insight360_objection_handler oh
+FROM hub_insight360.insight360_objection_handler_dul oh
 WHERE oh.MLR_Approved_Response IS NOT NULL
   AND oh.MLR_Approved_Response <> ''
 ORDER BY
@@ -242,8 +242,8 @@ SELECT
     th.District_Name,
     th.Region_Name,
     CAST(GETDATE() AS DATE)                                 AS Report_As_Of_Date
-FROM hub_insight360.insight360_active_alerts aa
-LEFT JOIN hub_insight360.vw_tdim_terr_hierarchy_zenpep_reporting th
+FROM hub_insight360.insight360_active_alerts_dul aa
+LEFT JOIN hub_insight360.vw_tdim_terr_hierarchy_zenpep_reporting_dul th
        ON th.Territory_Durable_Id = aa.Territory_Durable_Id
 ORDER BY
     CASE aa.Alert_Priority
@@ -276,11 +276,11 @@ WITH alert_territory_rx AS (
         aa.Affected_HCP_Count,
         -- Rolling 3M Zenpep TRx for the alerted territory
         SUM(CAST(r.Normalized_Total_Rx_Quantity AS DECIMAL(10,2))) AS Territory_TRx_3M
-    FROM hub_insight360.insight360_active_alerts aa
-    LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting at2
+    FROM hub_insight360.insight360_active_alerts_dul aa
+    LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting_dul at2
            ON at2.Territory_Durable_Id = aa.Territory_Durable_Id
           AND at2.sales_force = 'Commercial_Sales_Field_Force'
-    LEFT JOIN hub_insight360.vw_tfact_prescribersales_zenpep_reporting r
+    LEFT JOIN hub_insight360.vw_tfact_prescribersales_zenpep_reporting_dul r
            ON r.HCP_Durable_Id = at2.HCP_Durable_Id
           AND r.Brand_Name = 'ZENPEP'
           AND CAST(r.Month_Ending_Date AS DATE) >= @rolling_start
@@ -344,11 +344,11 @@ SELECT
         TRY_CAST(NULLIF(LTRIM(RTRIM(h.Target_Decile_Sort_Zenpep)),'') AS INT) ASC
     )                                                       AS Top_HCPs_To_Target,
     CAST(GETDATE() AS DATE)                                 AS Report_As_Of_Date
-FROM hub_insight360.insight360_active_alerts aa
-LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting at2
+FROM hub_insight360.insight360_active_alerts_dul aa
+LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting_dul at2
        ON at2.Territory_Durable_Id = aa.Territory_Durable_Id
       AND at2.sales_force = 'Commercial_Sales_Field_Force'
-LEFT JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting h
+LEFT JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting_dul h
        ON h.HCP_Durable_Id = at2.HCP_Durable_Id
       AND h.Target = 'Y'
 GROUP BY
@@ -392,11 +392,11 @@ SELECT
     SUM(CASE WHEN aw.Trend_Direction = 'Improving'  THEN 1 ELSE 0 END) AS Improving_Count,
     SUM(CASE WHEN aw.Trend_Direction = 'Stable'     THEN 1 ELSE 0 END) AS Stable_Count,
     CAST(GETDATE() AS DATE)                                 AS Report_As_Of_Date
-FROM hub_insight360.insight360_hcp_awareness aw
-LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting at2
+FROM hub_insight360.insight360_hcp_awareness_dul aw
+LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting_dul at2
        ON at2.HCP_Durable_Id = aw.HCP_Durable_Id
       AND at2.sales_force = 'Commercial_Sales_Field_Force'
-LEFT JOIN hub_insight360.vw_tdim_terr_hierarchy_zenpep_reporting tm
+LEFT JOIN hub_insight360.vw_tdim_terr_hierarchy_zenpep_reporting_dul tm
        ON tm.Territory_Durable_Id = at2.Territory_Durable_Id
 GROUP BY
     tm.Territory_Durable_Id,
@@ -436,13 +436,13 @@ SELECT
     tm.Territory_Name,
     tm.District_Name,
     CAST(GETDATE() AS DATE)                                 AS Report_As_Of_Date
-FROM hub_insight360.insight360_hcp_awareness aw
-LEFT JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting h
+FROM hub_insight360.insight360_hcp_awareness_dul aw
+LEFT JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting_dul h
        ON h.HCP_Durable_Id = aw.HCP_Durable_Id
-LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting at2
+LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting_dul at2
        ON at2.HCP_Durable_Id = aw.HCP_Durable_Id
       AND at2.sales_force = 'Commercial_Sales_Field_Force'
-LEFT JOIN hub_insight360.vw_tdim_terr_hierarchy_zenpep_reporting tm
+LEFT JOIN hub_insight360.vw_tdim_terr_hierarchy_zenpep_reporting_dul tm
        ON tm.Territory_Durable_Id = at2.Territory_Durable_Id
 WHERE aw.Trend_Direction = 'Declining'
    OR aw.Re_Engagement_Priority = 'HIGH'
@@ -481,13 +481,13 @@ SELECT
     -- Live Zenpep TRx for context (rolling 3M)
     SUM(CAST(r.Normalized_Total_Rx_Quantity AS DECIMAL(10,2))) AS Zenpep_TRx_3M,
     CAST(GETDATE() AS DATE)                                 AS Report_As_Of_Date
-FROM hub_insight360.insight360_competitive_intel ci
-LEFT JOIN hub_insight360.vw_tdim_terr_hierarchy_zenpep_reporting th
+FROM hub_insight360.insight360_competitive_intel_dul ci
+LEFT JOIN hub_insight360.vw_tdim_terr_hierarchy_zenpep_reporting_dul th
        ON th.Territory_Durable_Id = ci.Territory_Durable_Id
-LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting at2
+LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting_dul at2
        ON at2.Territory_Durable_Id = ci.Territory_Durable_Id
       AND at2.sales_force = 'Commercial_Sales_Field_Force'
-LEFT JOIN hub_insight360.vw_tfact_prescribersales_zenpep_reporting r
+LEFT JOIN hub_insight360.vw_tfact_prescribersales_zenpep_reporting_dul r
        ON r.HCP_Durable_Id = at2.HCP_Durable_Id
       AND r.Brand_Name = 'ZENPEP'
       AND CAST(r.Month_Ending_Date AS DATE) >= DATEADD(MONTH, -3, CAST(GETDATE() AS DATE))
@@ -552,7 +552,7 @@ SELECT
         ELSE 'NO CHANGE'
     END                                                     AS Tier_Change_Direction,
     CAST(GETDATE() AS DATE)                                 AS Report_As_Of_Date
-FROM hub_insight360.insight360_payer_access pa
+FROM hub_insight360.insight360_payer_access_dul pa
 ORDER BY
     CASE pa.Access_Impact_Level
         WHEN 'HIGH'   THEN 1
@@ -589,9 +589,9 @@ WITH payer_impact AS (
             SUM(CAST(r.Normalized_Total_Rx_Quantity AS DECIMAL(10,2))),
             0
         )                                                   AS Affected_HCP_TRx_Rolling_12M
-    FROM hub_insight360.insight360_payer_access pa
+    FROM hub_insight360.insight360_payer_access_dul pa
     -- Join to live Rx fact filtered to this plan
-    LEFT JOIN hub_insight360.vw_tfact_prescribersales_zenpep_reporting r
+    LEFT JOIN hub_insight360.vw_tfact_prescribersales_zenpep_reporting_dul r
            ON r.Plan_Durable_Id = pa.Plan_Durable_Id
           AND r.Brand_Name = 'ZENPEP'
           AND CAST(r.Month_Ending_Date AS DATE) >= DATEADD(MONTH, -12, CAST(GETDATE() AS DATE))

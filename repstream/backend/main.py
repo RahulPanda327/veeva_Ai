@@ -76,6 +76,15 @@ def _refresh_endpoint_cache_background() -> None:
     except Exception:
         logger.exception("Startup endpoint-cache refresh failed")
 
+    # New Writer ID per-territory warm-up runs LAST, sequentially — AFTER the
+    # response-cache warm-up above has fully finished. It's minutes of Synapse
+    # queries + GPT-4o calls; running it concurrently starves the DB pool
+    # (15 conns max) and GPT throughput, which made the response-cache
+    # endpoints above crawl (summary timed out, hcp-list 40s). Sequential =
+    # the fast response cache is warm in ~3 min like before, then this runs
+    # with the field to itself.
+    _warm_new_writer_territories()
+
 
 def _detect_base_url() -> str:
     """Read --port (and --host, if not a bind-all address) from sys.argv —
@@ -92,6 +101,23 @@ def _detect_base_url() -> str:
             if candidate not in ("0.0.0.0", "::"):  # not connectable as a destination
                 host = candidate
     return f"http://{host}:{port}"
+
+
+def _warm_new_writer_territories() -> None:
+    """Warm the New Writer ID per-territory candidate cache and persist it to
+    .new_writer_candidates_cache.json. Runs IN-PROCESS (writes THIS server's
+    _CANDIDATE_CACHE dict, not a subprocess copy) and is called sequentially at
+    the end of _refresh_endpoint_cache_background — never concurrently with the
+    response-cache warm-up, to avoid starving the DB pool / GPT throughput."""
+    try:
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            new_writer_id.warm_all_territory_candidates(db)
+        finally:
+            db.close()
+    except Exception:
+        logger.exception("New Writer ID territory pre-warm failed")
 
 
 @asynccontextmanager

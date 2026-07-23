@@ -1,4 +1,4 @@
-Table Name: hub_insight360.insight360_active_alerts
+Table Name: hub_insight360.insight360_active_alerts_dul
 
 Purpose:
 This table stores active business alerts generated from analytics, anomaly detection,

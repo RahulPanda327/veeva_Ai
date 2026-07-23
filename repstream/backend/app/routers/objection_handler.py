@@ -19,6 +19,7 @@ from app.services.objection_handler.mlr_response_engine import (
     load_all_objections,
     sort_objections,
 )
+from app.services.filters_service import FilterSelection, filter_params, resolve_territories, salesforce_of
 from app.utils.auth import RepIdentity, get_current_rep
 from app.utils.cache import cache_get, cache_set, territory_cache_key
 
@@ -28,13 +29,16 @@ router = APIRouter(prefix="/objections", tags=["Objection Handler"])
 _CACHE_TTL = 3600
 
 
-def _get_objection_list(db: Session, territory_id: str, period: Optional[str] = None) -> List[dict]:
-    cache_key = territory_cache_key(f"objections:list_v2:{period or 'all'}", territory_id)
+def _get_objection_list(
+    db: Session, territory_ids: Optional[List[str]] = None, period: Optional[str] = None
+) -> List[dict]:
+    scope_key = ",".join(sorted(territory_ids)) if territory_ids else "all"
+    cache_key = territory_cache_key(f"objections:list_v3:{period or 'all'}", scope_key)
     cached = cache_get(cache_key)
     if cached:
         return cached
 
-    rows = load_all_objections(db, territory_id, period)
+    rows = load_all_objections(db, territory_ids, period)
     rows = enrich_objection_list(rows)
     rows = sort_objections(rows)
 
@@ -45,11 +49,17 @@ def _get_objection_list(db: Session, territory_id: str, period: Optional[str] = 
 @router.get("/list", response_model=List[ObjectionItem])
 async def list_objections(
     period: Optional[str] = None,
+    sel: FilterSelection = Depends(filter_params),
     rep: RepIdentity = Depends(get_current_rep),
     db: Session = Depends(get_db),
 ):
-    """Ranked objections with NLP analysis, frequency labels, and AI-optimized responses."""
-    rows = _get_objection_list(db, rep.territory_id, period)
+    """Ranked objections with NLP analysis, frequency labels, and AI-optimized responses.
+
+    Pass manager_id/employee_id/territory_id to scope to that selection (filtered on
+    the table's Territory_Durable_Id column); unfiltered returns all objections."""
+    territories = resolve_territories(db, salesforce_of(rep.territory_id), sel)
+    bare = [t.split("|")[-1] for t in territories] if territories else None
+    rows = _get_objection_list(db, bare, period)
     return [ObjectionItem(**o) for o in rows]
 
 
@@ -60,8 +70,8 @@ async def get_objection_response(
     db: Session = Depends(get_db),
 ):
     """MLR-approved response with AI enrichment for a single objection."""
-    # Try to get from the cached list first
-    rows = _get_objection_list(db, rep.territory_id)
+    # Try to get from the cached list first (all objections — lookup is by id)
+    rows = _get_objection_list(db)
     row = next((r for r in rows if r["objection_id"] == objection_id), None)
 
     if row:

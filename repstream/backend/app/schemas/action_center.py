@@ -4,6 +4,8 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field, ConfigDict
 
+from app.schemas.filters import OrgFilters
+
 
 # ──────────────────────────────────────────────────
 # Shared sub-objects
@@ -91,8 +93,8 @@ class AlertItem(BaseModel):
     ai_supporting_materials:  List[SupportingMaterial] = Field(default=[], description="GPT-4o: Zenpep materials to deploy — shown below counter script")
 
     # ── Payer tier change ─────────────────────────────────────────────────────
-    tier_current:  Optional[str] = Field(default=None, description="insight360_payer_access.Formulary_Tier. Only populated for payer alerts sourced from that table; null otherwise")
-    tier_previous: Optional[str] = Field(default=None, description="insight360_payer_access.Previous_Tier. Only populated for payer alerts sourced from that table; null otherwise")
+    tier_current:  Optional[str] = Field(default=None, description="insight360_payer_access_dul.Formulary_Tier. Only populated for payer alerts sourced from that table; null otherwise")
+    tier_previous: Optional[str] = Field(default=None, description="insight360_payer_access_dul.Previous_Tier. Only populated for payer alerts sourced from that table; null otherwise")
 
     # ── State Flags ───────────────────────────────────────────────────────────
     is_acknowledged: bool = Field(default=False, description="Rep has acknowledged this alert")
@@ -137,6 +139,9 @@ class ActionCenterSummary(BaseModel):
     ai_new_unread_count: int          = Field(default=0,    description="Badge count on yellow banner showing unread alerts", examples=[8])
     ai_banner_message:   Optional[str]= Field(default=None, description="Yellow banner message text. Null if no critical alerts", examples=["Competitive script shifts detected in your territory"])
 
+    # Manager → employee → territory filter tree for the filter dropdowns
+    filters: Optional[OrgFilters] = Field(default=None, description="Manager → employee → territory tree for the filter dropdowns")
+
 
 class CompetitiveAlertItem(BaseModel):
     alert_id:                 str
@@ -177,8 +182,8 @@ class PayerAlertItem(BaseModel):
     ai_rx_risk:               Optional[str] = None   # shows as "Access Impact" for payer
     ai_prescribing_drift_note: Optional[str] = None
     recommended_actions:      List[str]     = []
-    tier_current:              Optional[str] = Field(default=None, description="insight360_payer_access.Formulary_Tier. Only populated for payer alerts sourced from that table; null otherwise")
-    tier_previous:             Optional[str] = Field(default=None, description="insight360_payer_access.Previous_Tier. Only populated for payer alerts sourced from that table; null otherwise")
+    tier_current:              Optional[str] = Field(default=None, description="insight360_payer_access_dul.Formulary_Tier. Only populated for payer alerts sourced from that table; null otherwise")
+    tier_previous:             Optional[str] = Field(default=None, description="insight360_payer_access_dul.Previous_Tier. Only populated for payer alerts sourced from that table; null otherwise")
 
 
 class AlertGroups(BaseModel):
@@ -191,7 +196,7 @@ class AlertListResponse(BaseModel):
     summary:     ActionCenterSummary = Field(description="KPI summary tiles + banner data for the top section")
     alerts:      AlertGroups         = Field(description="Alerts grouped by module type")
     total:       int                 = Field(description="Total alerts returned across all groups", examples=[8])
-    total_in_db: int                 = Field(default=0, description="Actual row count in insight360_active_alerts", examples=[8])
+    total_in_db: int                 = Field(default=0, description="Actual row count in insight360_active_alerts_dul", examples=[8])
 
 
 class ActiveAlertSection(BaseModel):
@@ -312,7 +317,7 @@ class PayerAccessItem(BaseModel):
     ai_action_plan: Union[str, List[str]] = []       # List[str] when AI-flagged, str when DB fallback
     ai_pa_bridge_note: Optional[str] = None         # PA bridge language (if PA required)
 
-    # "View Action Plan" — insight360_payer_access.Recommended_Action
+    # "View Action Plan" — insight360_payer_access_dul.Recommended_Action
     view_action_plan: Optional[str] = None
 
     # Badges

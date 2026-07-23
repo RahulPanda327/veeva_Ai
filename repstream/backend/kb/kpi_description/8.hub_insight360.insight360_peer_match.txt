@@ -1,4 +1,4 @@
-Table: hub_insight360.insight360_peer_match
+Table: hub_insight360.insight360_peer_match_dul
 Purpose
 This table stores peer matching insights for Healthcare Professionals (HCPs).
 It identifies physicians/providers and recommends similar peer physicians (Peer Connectors) based on specialty, location, patient patterns, and engagement insights. It also generates personalized warm approach messages that sales/field teams can use for outreach.
@@ -99,7 +99,7 @@ ENGINEERING NOTES (verified via sql_query_kpi_7to19.sql KPI 7):
   Parse to float:  float(row.Peer_Match_Pct.replace('%', ''))
 
 - This table has NO territory_id column.
-  Territory is derived by joining to vw_account_territory_zenpep_reporting on HCP_Durable_Id.
+  Territory is derived by joining to vw_account_territory_zenpep_reporting_dul on HCP_Durable_Id.
 
 - HCP_Durable_Id is the primary key (one row per HCP candidate).
 --------------------------------------------------------------------------------------------------------------

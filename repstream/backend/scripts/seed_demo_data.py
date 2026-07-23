@@ -32,7 +32,7 @@ DDL = f"""
 CREATE SCHEMA IF NOT EXISTS {SCHEMA};
 
 -- HCP Dimension
-CREATE TABLE IF NOT EXISTS {SCHEMA}.vw_tdim_healthcarepractitioner_zenpep_reporting (
+CREATE TABLE IF NOT EXISTS {SCHEMA}.vw_tdim_healthcarepractitioner_zenpep_reporting_dul (
     hcp_id              VARCHAR(50) PRIMARY KEY,
     npi_number          VARCHAR(20),
     hcp_first_name      VARCHAR(100),
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.vw_tdim_healthcarepractitioner_zenpep_report
 );
 
 -- Prescriber Sales Fact
-CREATE TABLE IF NOT EXISTS {SCHEMA}.vw_tfact_prescribersales_zenpep_reporting (
+CREATE TABLE IF NOT EXISTS {SCHEMA}.vw_tfact_prescribersales_zenpep_reporting_dul (
     record_id        VARCHAR(80) PRIMARY KEY,
     hcp_id           VARCHAR(50),
     territory_id     VARCHAR(50),
@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.vw_tfact_prescribersales_zenpep_reporting (
 );
 
 -- Call Activity Fact
-CREATE TABLE IF NOT EXISTS {SCHEMA}.vw_tfact_callactivitydetails_zenpep_reporting (
+CREATE TABLE IF NOT EXISTS {SCHEMA}.vw_tfact_callactivitydetails_zenpep_reporting_dul (
     call_id                VARCHAR(80) PRIMARY KEY,
     hcp_id                 VARCHAR(50),
     rep_id                 VARCHAR(50),
@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.vw_tfact_callactivitydetails_zenpep_reportin
 );
 
 -- Territory Hierarchy
-CREATE TABLE IF NOT EXISTS {SCHEMA}.vw_tdim_terr_hierarchy_zenpep_reporting (
+CREATE TABLE IF NOT EXISTS {SCHEMA}.vw_tdim_terr_hierarchy_zenpep_reporting_dul (
     territory_id   VARCHAR(50) PRIMARY KEY,
     territory_name VARCHAR(100),
     territory_code VARCHAR(50),
@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.vw_tdim_terr_hierarchy_zenpep_reporting (
 );
 
 -- Peer Match (enriched)
-CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_peer_match (
+CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_peer_match_dul (
     match_id           VARCHAR(80) PRIMARY KEY,
     hcp_id             VARCHAR(50),
     peer_hcp_id        VARCHAR(50),
@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_new_writer_id (
 );
 
 -- Objection Handler (enriched)
-CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_objection_handler (
+CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_objection_handler_dul (
     objection_id         VARCHAR(80) PRIMARY KEY,
     objection_type       VARCHAR(100),
     objection_text       TEXT,
@@ -158,7 +158,7 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_objection_handler (
 );
 
 -- Call Transcripts (enriched)
-CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_call_transcripts (
+CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_call_transcripts_dul (
     transcript_id      VARCHAR(80) PRIMARY KEY,
     call_id            VARCHAR(80),
     hcp_id             VARCHAR(50),
@@ -175,7 +175,7 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_call_transcripts (
 );
 
 -- Action Center: Active Alerts
-CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_active_alerts (
+CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_active_alerts_dul (
     alert_id                  VARCHAR(80) PRIMARY KEY,
     alert_type                VARCHAR(50),
     severity                  VARCHAR(20),
@@ -201,7 +201,7 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_active_alerts (
 );
 
 -- Action Center: HCP Awareness
-CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_hcp_awareness (
+CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_hcp_awareness_dul (
     awareness_id                VARCHAR(80) PRIMARY KEY,
     hcp_id                      VARCHAR(50),
     hcp_full_name               VARCHAR(200),
@@ -222,7 +222,7 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_hcp_awareness (
 );
 
 -- Action Center: Competitive Intel
-CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_competitive_intel (
+CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_competitive_intel_dul (
     intel_id                VARCHAR(80) PRIMARY KEY,
     competitor_name         VARCHAR(100),
     territory_id            VARCHAR(50),
@@ -242,7 +242,7 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_competitive_intel (
 );
 
 -- Action Center: Payer Access
-CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_payer_access (
+CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_payer_access_dul (
     access_id                    VARCHAR(80) PRIMARY KEY,
     payer_name                   VARCHAR(200),
     territory_id                 VARCHAR(50),
@@ -263,7 +263,7 @@ CREATE TABLE IF NOT EXISTS {SCHEMA}.insight360_payer_access (
 );
 
 -- Employee Dimension (needed for Celery batch territory lookup)
-CREATE TABLE IF NOT EXISTS {SCHEMA}.vw_tdim_employee_zenpep_reporting (
+CREATE TABLE IF NOT EXISTS {SCHEMA}.vw_tdim_employee_zenpep_reporting_dul (
     rep_id      VARCHAR(50) PRIMARY KEY,
     employee_id VARCHAR(50),
     first_name  VARCHAR(100),
@@ -936,27 +936,27 @@ def run():
 
         print("Truncating existing demo data…")
         for tbl in [
-            "insight360_payer_access",
-            "insight360_competitive_intel",
-            "insight360_hcp_awareness",
-            "insight360_active_alerts",
-            "insight360_call_transcripts",
-            "insight360_objection_handler",
+            "insight360_payer_access_dul",
+            "insight360_competitive_intel_dul",
+            "insight360_hcp_awareness_dul",
+            "insight360_active_alerts_dul",
+            "insight360_call_transcripts_dul",
+            "insight360_objection_handler_dul",
             "insight360_new_writer_id",
-            "insight360_peer_match",
-            "vw_tfact_callactivitydetails_zenpep_reporting",
-            "vw_tfact_prescribersales_zenpep_reporting",
-            "vw_tdim_healthcarepractitioner_zenpep_reporting",
-            "vw_tdim_terr_hierarchy_zenpep_reporting",
+            "insight360_peer_match_dul",
+            "vw_tfact_callactivitydetails_zenpep_reporting_dul",
+            "vw_tfact_prescribersales_zenpep_reporting_dul",
+            "vw_tdim_healthcarepractitioner_zenpep_reporting_dul",
+            "vw_tdim_terr_hierarchy_zenpep_reporting_dul",
             "vw_tdim_employee_territory_zenpep_reporting",
-            "vw_tdim_employee_zenpep_reporting",
+            "vw_tdim_employee_zenpep_reporting_dul",
         ]:
             conn.execute(text(f"TRUNCATE TABLE {SCHEMA}.{tbl} CASCADE"))
 
         print("Seeding territory hierarchy…")
         for r in seed_territory():
             conn.execute(text(f"""
-                INSERT INTO {SCHEMA}.vw_tdim_terr_hierarchy_zenpep_reporting
+                INSERT INTO {SCHEMA}.vw_tdim_terr_hierarchy_zenpep_reporting_dul
                 (territory_id,territory_name,territory_code,district_id,district_name,
                  region_id,region_name,area_id,area_name,zone_id,zone_name)
                 VALUES (:tid,:tn,:tc,:did,:dn,:rid,:rn,:aid,:an,:zid,:zn)
@@ -967,7 +967,7 @@ def run():
         print("Seeding HCPs…")
         for r in seed_hcps():
             conn.execute(text(f"""
-                INSERT INTO {SCHEMA}.vw_tdim_healthcarepractitioner_zenpep_reporting
+                INSERT INTO {SCHEMA}.vw_tdim_healthcarepractitioner_zenpep_reporting_dul
                 (hcp_id,npi_number,hcp_first_name,hcp_last_name,hcp_full_name,
                  specialty,sub_specialty,address_line1,address_line2,city,state,zip_code,
                  territory_id,hcp_segment,decile_rank,icd10_codes,is_active,
@@ -978,7 +978,7 @@ def run():
         print("Seeding prescriber sales…")
         for r in seed_prescriber_sales():
             conn.execute(text(f"""
-                INSERT INTO {SCHEMA}.vw_tfact_prescribersales_zenpep_reporting
+                INSERT INTO {SCHEMA}.vw_tfact_prescribersales_zenpep_reporting_dul
                 (record_id,hcp_id,territory_id,product_name,brand_name,market_name,
                  year,quarter,month,period_date,total_rx,new_rx,refill_rx,
                  market_total_rx,competitor_rx,market_share,competitor_brand,is_brand)
@@ -988,7 +988,7 @@ def run():
         print("Seeding call activity…")
         for r in seed_call_activity():
             conn.execute(text(f"""
-                INSERT INTO {SCHEMA}.vw_tfact_callactivitydetails_zenpep_reporting
+                INSERT INTO {SCHEMA}.vw_tfact_callactivitydetails_zenpep_reporting_dul
                 (call_id,hcp_id,rep_id,territory_id,call_date,call_type,call_outcome,
                  products_discussed,call_notes,is_reached,call_duration_minutes,
                  rx_written_at_call,next_call_planned)
@@ -998,7 +998,7 @@ def run():
         print("Seeding peer matches…")
         for r in seed_peer_matches():
             conn.execute(text(f"""
-                INSERT INTO {SCHEMA}.insight360_peer_match
+                INSERT INTO {SCHEMA}.insight360_peer_match_dul
                 (match_id,hcp_id,peer_hcp_id,peer_hcp_name,match_score,
                  match_rationale,shared_specialty,shared_institution,peer_brand_rx_q1,territory_id)
                 VALUES (:a,:b,:c,:d,:e,:f,:g,:h,:i,:j)
@@ -1017,7 +1017,7 @@ def run():
         print("Seeding objection handler…")
         for r in seed_objections():
             conn.execute(text(f"""
-                INSERT INTO {SCHEMA}.insight360_objection_handler
+                INSERT INTO {SCHEMA}.insight360_objection_handler_dul
                 (objection_id,objection_type,objection_text,hcp_segment,
                  recommended_response,response_source,sku,success_rate,call_count,
                  territory_id,period)
@@ -1027,7 +1027,7 @@ def run():
         print("Seeding call transcripts…")
         for r in seed_call_transcripts():
             conn.execute(text(f"""
-                INSERT INTO {SCHEMA}.insight360_call_transcripts
+                INSERT INTO {SCHEMA}.insight360_call_transcripts_dul
                 (transcript_id,call_id,hcp_id,rep_id,territory_id,call_date,
                  transcript_text,has_objection,objection_types,objection_resolved,
                  rx_within_30_days,sentiment_score)
@@ -1037,7 +1037,7 @@ def run():
         print("Seeding employees…")
         for r in seed_employees():
             conn.execute(text(f"""
-                INSERT INTO {SCHEMA}.vw_tdim_employee_zenpep_reporting
+                INSERT INTO {SCHEMA}.vw_tdim_employee_zenpep_reporting_dul
                 (rep_id,employee_id,first_name,last_name,full_name,email,title,role,
                  manager_id,is_active,hire_date)
                 VALUES (:a,:b,:c,:d,:e,:f,:g,:h,:i,:j,:k)
@@ -1053,7 +1053,7 @@ def run():
         print("Seeding active alerts…")
         for r in seed_active_alerts():
             conn.execute(text(f"""
-                INSERT INTO {SCHEMA}.insight360_active_alerts
+                INSERT INTO {SCHEMA}.insight360_active_alerts_dul
                 (alert_id, alert_type, severity, detection_method, title, description,
                  detected_at, territory_id, period,
                  ai_affected_hcp_count, ai_territory_reach, ai_rx_risk,
@@ -1066,7 +1066,7 @@ def run():
         print("Seeding HCP awareness…")
         for r in seed_hcp_awareness():
             conn.execute(text(f"""
-                INSERT INTO {SCHEMA}.insight360_hcp_awareness
+                INSERT INTO {SCHEMA}.insight360_hcp_awareness_dul
                 (awareness_id, hcp_id, hcp_full_name, specialty, territory_id, period,
                  product_awareness_score, competitor_awareness_score, clinical_evidence_score,
                  total_interactions, last_interaction_date,
@@ -1078,7 +1078,7 @@ def run():
         print("Seeding competitive intel…")
         for r in seed_competitive_intel():
             conn.execute(text(f"""
-                INSERT INTO {SCHEMA}.insight360_competitive_intel
+                INSERT INTO {SCHEMA}.insight360_competitive_intel_dul
                 (intel_id, competitor_name, territory_id, period,
                  message_theme, detection_date, affected_hcp_count, market_share_change_pct,
                  icd10_focus, source_channel,
@@ -1090,7 +1090,7 @@ def run():
         print("Seeding payer access…")
         for r in seed_payer_access():
             conn.execute(text(f"""
-                INSERT INTO {SCHEMA}.insight360_payer_access
+                INSERT INTO {SCHEMA}.insight360_payer_access_dul
                 (access_id, payer_name, territory_id, period,
                  product_tier_current, product_tier_previous, tier_change_date, formulary_status,
                  covered_lives, affected_hcp_count, patient_assistance_available,

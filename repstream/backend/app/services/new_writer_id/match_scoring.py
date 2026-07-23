@@ -1,9 +1,13 @@
-"""Enrich new-writer candidates with peer match % from insight360_peer_match."""
+"""Enrich new-writer candidates with peer match % from insight360_peer_match_dul."""
 from typing import Dict, List
 
 from sqlalchemy.orm import Session
 
-from app.services.new_writer_id.peer_network import get_best_peer, load_peer_matches
+from app.services.new_writer_id.peer_network import (
+    find_nearest_zenpep_writers,
+    get_best_peer,
+    load_peer_matches,
+)
 
 
 def enrich_with_peer_match(
@@ -11,13 +15,20 @@ def enrich_with_peer_match(
     candidates: List[Dict],
     territory_id: str,
 ) -> List[Dict]:
-    """Add peer_match_pct, peer_name, peer_hcp_id to each candidate dict."""
+    """Add peer_match_pct, peer_name, peer_hcp_id to each candidate dict.
+
+    Candidates not covered by the curated KPI-7 insight360_peer_match_dul list
+    (e.g. the live/filtered detection path) fall back to a rule-based nearest
+    ZENPEP-writer match instead of being left null — see find_nearest_zenpep_writers."""
     hcp_ids = [c["hcp_id"] for c in candidates]
     peer_map = load_peer_matches(db, hcp_ids, territory_id)
 
+    unmatched = [c for c in candidates if not peer_map.get(c["hcp_id"])]
+    fallback_map = find_nearest_zenpep_writers(db, unmatched) if unmatched else {}
+
     for candidate in candidates:
         peers = peer_map.get(candidate["hcp_id"], [])
-        best = get_best_peer(peers)
+        best = get_best_peer(peers) or fallback_map.get(candidate["hcp_id"])
         if best:
             candidate["peer_match_pct"] = round(best["match_score"], 1)
             candidate["peer_name"] = best["peer_hcp_name"]

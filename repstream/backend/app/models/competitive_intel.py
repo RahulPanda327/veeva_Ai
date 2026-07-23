@@ -1,11 +1,11 @@
-"""SQLAlchemy model for insight360_competitive_intel (read-only)."""
+"""SQLAlchemy model for insight360_competitive_intel_dul (read-only)."""
 from sqlalchemy import Column, String
 from app.database import Base
 from app.config import settings
 
 
 class CompetitiveIntel(Base):
-    __tablename__ = "insight360_competitive_intel"
+    __tablename__ = "insight360_competitive_intel_dul"
     __table_args__ = {"schema": settings.HUB_SCHEMA, "extend_existing": True}
 
     intel_id                    = Column("Signal_Id",                   String(80),  primary_key=True)
@@ -19,6 +19,6 @@ class CompetitiveIntel(Base):
     competitor_call_freq_change = Column("Competitor_Call_Freq_Change", String(20))   # "+68%"
     counter_strategy            = Column("Counter_Strategy",            String(500))
     detection_date               = Column("Detection_Date",              String(20))
-    # No Region_Name or Territory_Sales column exists on insight360_competitive_intel
+    # No Region_Name or Territory_Sales column exists on insight360_competitive_intel_dul
     # (verified against INFORMATION_SCHEMA.COLUMNS) — those response fields are
     # always None for DB-sourced rows; only the sample fallback data has them.

@@ -403,7 +403,7 @@ def _build_item(row: PayerAccess) -> PayerAccessItem:
         ai_impact_summary=gpt.get("ai_impact_summary"),
         ai_action_plan=gpt.get("ai_action_plan") if ai_alert else (row.recommended_action or ""),
         ai_pa_bridge_note=gpt.get("ai_pa_bridge_note") or None,
-        view_action_plan=row.recommended_action,   # insight360_payer_access.Recommended_Action
+        view_action_plan=row.recommended_action,   # insight360_payer_access_dul.Recommended_Action
         analysis_badges=badges,
         ai_is_flagged=ai_alert,
     )
@@ -431,16 +431,24 @@ _SAMPLE_PA_ROWS = [
 
 def get_payer_access(
     db: Session,
-    territory_id: Optional[str] = None,
+    territory_ids: Optional[List[str]] = None,
     featured: bool = False,
 ) -> PayerAccessResponse:
+    # territory_ids (bare Territory_Durable_Ids) filters on the table's own
+    # Territory_Durable_Id column; None = all (the unfiltered default).
+    filtered = bool(territory_ids)
     rows = []
     try:
-        rows = db.query(PayerAccess).all()
+        q = db.query(PayerAccess)
+        if filtered:
+            q = q.filter(PayerAccess.territory_id.in_(territory_ids))
+        rows = q.all()
     except Exception as e:
         log.warning("Payer access DB query failed (%s), using sample data", e)
 
-    if not rows:
+    # Sample fallback only for the unfiltered default — a filtered selection with
+    # no matching plans is a valid empty result.
+    if not rows and not filtered:
         log.info("No payer access rows — using sample data")
         rows = _SAMPLE_PA_ROWS  # type: ignore[assignment]
 

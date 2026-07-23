@@ -428,14 +428,24 @@ class _FakeRow:
         return None
 
 
-def get_hcp_awareness(db: Session, territory_id: str) -> HCPAwarenessResponse:
+def get_hcp_awareness(
+    db: Session, territory_ids: Optional[List[str]] = None
+) -> HCPAwarenessResponse:
+    # territory_ids (bare Territory_Durable_Ids) filters on the table's own
+    # Territory_Durable_Id column; None = all (the unfiltered default).
+    filtered = bool(territory_ids)
     rows: List[HCPAwareness] = []
     try:
-        rows = db.query(HCPAwareness).all()
+        q = db.query(HCPAwareness)
+        if filtered:
+            q = q.filter(HCPAwareness.territory_id.in_(territory_ids))
+        rows = q.all()
     except Exception as e:
         log.warning("HCP awareness DB query failed (%s), using sample data", e)
 
-    if not rows:
+    # Sample fallback only for the unfiltered default — a filtered selection with
+    # no matching rows is a valid empty result.
+    if not rows and not filtered:
         log.info("No HCP awareness rows — using sample data")
         rows = [_FakeRow(r) for r in _SAMPLE_AWARENESS_ROWS]  # type: ignore[assignment]
 

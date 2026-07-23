@@ -142,7 +142,7 @@ def _load_pivot(engine) -> pd.DataFrame:
             SUM(CASE WHEN s.Brand_Name IN ('CREON','PANCREAZE')
                      THEN ISNULL(s.Total_Rx_Count, 0) ELSE 0 END) AS competitor_rx,
             MAX(s.sf_terr_pk_gi)                          AS territory_raw
-        FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting s
+        FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting_dul s
         WHERE CAST(s.Month_Ending_Date AS DATE) >= CAST(DATEADD(MONTH, -12, GETDATE()) AS DATE)
           AND s.HCP_Durable_Id IS NOT NULL
         GROUP BY s.HCP_Durable_Id,
@@ -165,7 +165,7 @@ def _load_hcp_info(engine, hcp_ids: List[int]) -> Dict[int, dict]:
     sql = text(f"""
         SELECT HCP_Durable_Id, Full_Name, Specialty_Description, Speciality_Group,
                City, State_Province, gi_territory_name
-        FROM hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting
+        FROM hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting_dul
         WHERE HCP_Durable_Id IN ({ids_str})
     """)
     with engine.connect() as conn:

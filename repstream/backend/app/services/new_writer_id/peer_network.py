@@ -2,7 +2,7 @@
 
 Implements KPI 7 verbatim (kb/sql_queries/sql_query_kpi_7to19.sql, lines 26-58) —
 peer network matching + warm approach recommendations, enriched with live HCP
-and territory context. Reads exclusively from insight360_peer_match (+ enrichment
+and territory context. Reads exclusively from insight360_peer_match_dul (+ enrichment
 joins). Returns {} if the DB is unavailable or has no matches — no sample fallback.
 """
 from __future__ import annotations
@@ -11,7 +11,7 @@ import logging
 from typing import Dict, List, Optional
 
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 log = logging.getLogger(__name__)
@@ -38,14 +38,14 @@ _KPI7_SQL = text("""
         tm.District_Name,
         tm.Region_Name,
         CAST(GETDATE() AS DATE)                                 AS Report_As_Of_Date
-    FROM hub_insight360.insight360_peer_match pm
+    FROM hub_insight360.insight360_peer_match_dul pm
     -- Enrich with live dim data where available
-    LEFT JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting h
+    LEFT JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting_dul h
            ON h.HCP_Durable_Id = pm.HCP_Durable_Id
-    LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting at2
+    LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting_dul at2
            ON at2.HCP_Durable_Id = pm.HCP_Durable_Id
           AND at2.sales_force = 'Commercial_Sales_Field_Force'
-    LEFT JOIN hub_insight360.vw_tdim_terr_hierarchy_zenpep_reporting tm
+    LEFT JOIN hub_insight360.vw_tdim_terr_hierarchy_zenpep_reporting_dul tm
            ON tm.Territory_Durable_Id = at2.Territory_Durable_Id
     -- Remove REPLACE to convert percentage string to numeric for sorting
     ORDER BY
@@ -92,3 +92,77 @@ def get_best_peer(peers: List[Dict]) -> Optional[Dict]:
     if not peers:
         return None
     return max(peers, key=lambda p: p["match_score"])
+
+
+_NEAREST_WRITER_SQL = text("""
+    SELECT
+        at2.Territory_Durable_Id AS territory_id,
+        s.HCP_Durable_Id         AS peer_hcp_id,
+        b.Formatted_Name         AS peer_hcp_name,
+        b.Specialty_Description  AS specialty,
+        SUM(ISNULL(TRY_CAST(s.Total_Rx_Count AS FLOAT), 0)) AS zenpep_rx
+    FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting_dul s
+    JOIN hub_insight360.vw_account_territory_zenpep_reporting_dul at2
+      ON at2.HCP_Durable_Id = s.HCP_Durable_Id
+     AND at2.sales_force = 'Commercial_Sales_Field_Force'
+    JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting_dul b
+      ON b.HCP_Durable_Id = s.HCP_Durable_Id
+    WHERE s.Brand_Name = 'ZENPEP'
+      AND at2.Territory_Durable_Id IN :terr_ids
+    GROUP BY at2.Territory_Durable_Id, s.HCP_Durable_Id, b.Formatted_Name, b.Specialty_Description
+    HAVING SUM(ISNULL(TRY_CAST(s.Total_Rx_Count AS FLOAT), 0)) > 0
+""").bindparams(bindparam("terr_ids", expanding=True))
+
+_SAME_SPECIALTY_SCORE = 78.0
+_SAME_TERRITORY_SCORE = 55.0
+
+
+def find_nearest_zenpep_writers(db: Session, candidates: List[Dict]) -> Dict[str, Dict]:
+    """Rule-based fallback peer match for candidates not covered by the curated
+    KPI-7 insight360_peer_match_dul list — i.e. live-detected candidates from a
+    manager/employee/territory filter (see non_writer_detection.detect_new_writers_for_hcps).
+
+    For each candidate, finds the highest-volume existing ZENPEP writer in the
+    same territory — preferring the same specialty — to use as a warm-intro
+    peer connector. Fully DB-driven: match_score reflects match quality
+    (same specialty+territory vs. territory only); peer identity and Rx
+    volume are real prescribing data, not invented. Returns {} for any
+    candidate whose territory has no current ZENPEP writer to point to.
+    """
+    if not candidates:
+        return {}
+    terr_ids = sorted({c.get("territory_id") for c in candidates if c.get("territory_id")})
+    if not terr_ids:
+        return {}
+
+    try:
+        df = pd.read_sql(_NEAREST_WRITER_SQL, db.bind, params={"terr_ids": terr_ids})
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Nearest ZENPEP-writer fallback failed (%s).", exc)
+        return {}
+    if df.empty:
+        return {}
+
+    by_terr = {t: g for t, g in df.groupby("territory_id")}
+
+    result: Dict[str, Dict] = {}
+    for c in candidates:
+        pool = by_terr.get(c.get("territory_id"))
+        if pool is None or pool.empty:
+            continue
+        specialty = (c.get("specialty") or "").strip().lower()
+        same_spec = pool[pool["specialty"].fillna("").str.strip().str.lower() == specialty] if specialty else pool.iloc[0:0]
+        if not same_spec.empty:
+            top, score = same_spec.sort_values("zenpep_rx", ascending=False).iloc[0], _SAME_SPECIALTY_SCORE
+        else:
+            top, score = pool.sort_values("zenpep_rx", ascending=False).iloc[0], _SAME_TERRITORY_SCORE
+        result[c["hcp_id"]] = {
+            "match_score": score,
+            "peer_hcp_name": top["peer_hcp_name"],
+            "peer_hcp_id": top["peer_hcp_id"],
+            "match_rationale": (
+                f"{top['peer_hcp_name']} in the same territory has written "
+                f"{int(top['zenpep_rx'])} Product Rx — worth a warm intro conversation."
+            ),
+        }
+    return result

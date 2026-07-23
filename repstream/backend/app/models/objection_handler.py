@@ -8,13 +8,14 @@ from app.config import settings
 
 
 class ObjectionHandler(Base):
-    """Maps to insight360_objection_handler (KPI 9-11)."""
+    """Maps to insight360_objection_handler_dul (KPI 9-11)."""
 
-    __tablename__ = "insight360_objection_handler"
+    __tablename__ = "insight360_objection_handler_dul"
     __table_args__ = {"schema": settings.HUB_SCHEMA, "extend_existing": True}
 
     transcript_id       = Column("Call_Transcript_Id",              String(80),  primary_key=True)
     hcp_id              = Column("HCP_Durable_Id",                  String(50),  index=True)
+    territory_id        = Column("Territory_Durable_Id",            String(50),  index=True)
     hcp_full_name       = Column("HCP_Full_Name",                   String(200))
     call_date           = Column("Call_Date",                       String(30))
     objection_category  = Column("Objection_Category",              String(100), index=True)
@@ -29,9 +30,9 @@ class ObjectionHandler(Base):
 
 
 class CallTranscript(Base):
-    """Maps to insight360_call_transcripts (KPI 8)."""
+    """Maps to insight360_call_transcripts_dul (KPI 8)."""
 
-    __tablename__ = "insight360_call_transcripts"
+    __tablename__ = "insight360_call_transcripts_dul"
     __table_args__ = {"schema": settings.HUB_SCHEMA, "extend_existing": True}
 
     call_id          = Column("Src_Call_Id",          String(80),  primary_key=True)

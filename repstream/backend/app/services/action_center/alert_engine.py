@@ -2,7 +2,7 @@
 Active Alerts engine — full pipeline:
 
   STEP 1 — DB READ
-    Read alert rows from hub_insight360.insight360_active_alerts
+    Read alert rows from hub_insight360.insight360_active_alerts_dul
 
   STEP 2 — ML / DATA (numbers & classifications)
     ai_severity          ← DB Alert_Priority (pre-computed by upstream ML)
@@ -402,7 +402,7 @@ def _format_reach(raw: str | None) -> str:
 
 def _icd10_for_alert(db: Session, row: ActiveAlert) -> List[ICD10Affected]:
     """
-    Pull real ICD-10 codes from vw_tdim_healthcarepractitioner_zenpep_reporting
+    Pull real ICD-10 codes from vw_tdim_healthcarepractitioner_zenpep_reporting_dul
     for HCPs in this alert's territory.  Counts are scaled to ai_affected_hcp_count.
     Falls back to proportional rule-based split if the view is empty.
     """
@@ -590,16 +590,20 @@ def _classify_alert_type(title: str, raw_method: str) -> str:
 
 # ── Build synthetic PAYER AlertItem from payer_access table ──────────────────
 
-def _payer_alerts_from_db(db: Session) -> List[AlertItem]:
-    """Pull ALL AI-flagged payer rows from DB — dynamic, changes as DB updates."""
+def _payer_alerts_from_db(db: Session, territory_ids: Optional[List[str]] = None) -> List[AlertItem]:
+    """Pull AI-flagged payer rows from DB — dynamic, changes as DB updates.
+    territory_ids (bare Territory_Durable_Ids) scopes to a manager/employee/
+    territory selection so payer alerts match the same filter as the other
+    Active Alert groups; None = all (the unfiltered default)."""
     try:
         from app.models.payer_access import PayerAccess
-        rows = (
-            db.query(PayerAccess)
-            .filter(PayerAccess.ai_alert_flag == "Yes")
-            .all()
-        )
-        if not rows:
+        q = db.query(PayerAccess).filter(PayerAccess.ai_alert_flag == "Yes")
+        if territory_ids:
+            q = q.filter(PayerAccess.territory_id.in_(territory_ids))
+        rows = q.all()
+        # Demo fallback (limit-5) applies ONLY to the unfiltered default — a
+        # filtered selection with no flagged plan is a valid empty result.
+        if not rows and not territory_ids:
             rows = db.query(PayerAccess).limit(5).all()
         if not rows:
             return []
@@ -656,7 +660,7 @@ def _payer_alerts_from_db(db: Session) -> List[AlertItem]:
 def _affected_hcps_by_alert(db: Session) -> Dict[str, List[dict]]:
     """Alert_Id → affected HCP details.
 
-    insight360_active_alerts_details is the alert→HCP bridge table
+    insight360_active_alerts_details_dul is the alert→HCP bridge table
     (Alert_Id, HCP_Durable_Id); joined to the HCP dimension view for details.
     One query for all alerts, grouped in Python (only ~60 bridge rows).
     """
@@ -670,8 +674,8 @@ def _affected_hcps_by_alert(db: Session) -> Dict[str, List[dict]]:
                 c.Segment_Description   AS segment,
                 c.City                  AS city,
                 c.State_Province        AS state
-            FROM hub_insight360.insight360_active_alerts_details b
-            INNER JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting c
+            FROM hub_insight360.insight360_active_alerts_details_dul b
+            INNER JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting_dul c
                 ON b.HCP_Durable_Id = c.HCP_Durable_Id
         """)
         result: Dict[str, List[dict]] = {}
@@ -687,9 +691,9 @@ def _affected_hcps_by_alert(db: Session) -> Dict[str, List[dict]]:
 def _deploy_reps_by_alert(db: Session) -> Dict[str, List[dict]]:
     """Alert_Id → field reps to deploy the alert to, with their affected HCPs.
 
-    Chain: insight360_active_alerts_details (alert→HCP)
-         → vw_account_territory_zenpep_reporting (HCP→territory, Commercial_Sales_Field_Force)
-         → vw_tdim_employee_zenpep_reporting (territory→rep).
+    Chain: insight360_active_alerts_details_dul (alert→HCP)
+         → vw_account_territory_zenpep_reporting_dul (HCP→territory, Commercial_Sales_Field_Force)
+         → vw_tdim_employee_zenpep_reporting_dul (territory→rep).
     One query for all alerts, grouped per alert per rep in Python.
     """
     try:
@@ -698,15 +702,15 @@ def _deploy_reps_by_alert(db: Session) -> Dict[str, List[dict]]:
                 d.Alert_Id               AS alert_id,
                 c.Formatted_Name         AS hcp_name,
                 at2.Territory_Durable_Id AS territory_id,
-                e.Name                   AS rep_name,
+                e.Employee_Name          AS rep_name,
                 e.Email                  AS rep_email
-            FROM hub_insight360.insight360_active_alerts_details d
-            JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting c
+            FROM hub_insight360.insight360_active_alerts_details_dul d
+            JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting_dul c
               ON c.HCP_Durable_Id = d.HCP_Durable_Id
-            LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting at2
+            LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting_dul at2
               ON at2.HCP_Durable_Id = d.HCP_Durable_Id
              AND at2.sales_force = 'Commercial_Sales_Field_Force'
-            LEFT JOIN hub_insight360.vw_tdim_employee_zenpep_reporting e
+            LEFT JOIN hub_insight360.vw_tdim_employee_zenpep_reporting_dul e
               ON e.Territory_Durable_Id = at2.Territory_Durable_Id
         """)
         grouped: Dict[str, Dict[tuple, dict]] = {}
@@ -733,7 +737,7 @@ def _deploy_reps_by_alert(db: Session) -> Dict[str, List[dict]]:
 def _affected_hcps_by_plan(db: Session) -> Dict[str, List[dict]]:
     """Plan_Durable_Id → affected HCP details.
 
-    insight360_payer_access_details is the payer-plan→HCP bridge table
+    insight360_payer_access_details_dul is the payer-plan→HCP bridge table
     (Plan_Durable_Id, HCP_Durable_Id); joined to the HCP dimension view.
     """
     try:
@@ -746,8 +750,8 @@ def _affected_hcps_by_plan(db: Session) -> Dict[str, List[dict]]:
                 c.Segment_Description   AS segment,
                 c.City                  AS city,
                 c.State_Province        AS state
-            FROM hub_insight360.insight360_payer_access_details b
-            INNER JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting c
+            FROM hub_insight360.insight360_payer_access_details_dul b
+            INNER JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting_dul c
                 ON b.HCP_Durable_Id = c.HCP_Durable_Id
         """)
         result: Dict[str, List[dict]] = {}
@@ -760,9 +764,80 @@ def _affected_hcps_by_plan(db: Session) -> Dict[str, List[dict]]:
         return {}
 
 
+# ── Rollup builders: Active Alerts' competitive + HCP-awareness groups are
+#    sourced live from those module tabs (same territory filter), so the page
+#    is one consistent filter context. Payer stays sourced from the flagged
+#    payer rows (see _payer_alerts_from_db). ───────────────────────────────────
+
+_AWARENESS_SEVERITY = {"Low": "HIGH", "Medium": "MEDIUM", "High": "LOW"}
+
+
+def _competitive_cards(db: Session, territory_ids: Optional[List[str]]) -> List[dict]:
+    """Competitive alert cards built from the Competitive Intel module's own
+    (territory-filtered) output — so Active Alerts mirrors that tab 1:1."""
+    from app.services.action_center.competitive_intel_svc import get_competitive_intel
+    resp = get_competitive_intel(db, territory_ids=territory_ids)
+    cards = []
+    for i, it in enumerate(resp.items, start=1):
+        cards.append({f"alert_{i}": {
+            "alert_type":                "competitive",
+            "alert_id":                  it.signal_id,
+            "ai_severity":               (it.risk_level or "MEDIUM"),
+            "ai_detection_method":       it.signal_type,
+            "detected_at":               it.signal_date,
+            "title":                     it.headline,
+            "description":               it.executive_summary,
+            "ai_affected_hcp_count":     0,
+            "ai_territory_reach":        it.territory_name or "",
+            "ai_rx_risk":                it.risk_level,
+            "ai_icd10_codes_affected":   [],
+            "ai_prescribing_drift_note": it.business_impact,
+            "ai_counter_script":         it.counter_strategy,
+            "ai_supporting_materials":   [],
+            "recommended_actions":       it.recommended_actions or [],
+            "field_force_talking_points": it.field_force_talking_points or [],
+            "competitor_brand":          it.competitor_brand,
+            "view_affected_hcp":         [],
+            "deploy_to_field":           [],
+        }})
+    return cards
+
+
+def _hcp_awareness_cards(db: Session, territory_ids: Optional[List[str]]) -> List[dict]:
+    """HCP-awareness alert cards built from the HCP Awareness module's own
+    (territory-filtered) output — so Active Alerts mirrors that tab 1:1."""
+    from app.services.action_center.hcp_awareness_svc import get_hcp_awareness
+    resp = get_hcp_awareness(db, territory_ids=territory_ids)
+    cards = []
+    for i, it in enumerate(resp.items, start=1):
+        declining = (it.ai_trend_direction or "") == "Declining"
+        cards.append({f"alert_{i}": {
+            "alert_type":          "hcp_awareness",
+            "alert_id":            f"AWARE-{it.hcp_full_name}",
+            "ai_severity":         _AWARENESS_SEVERITY.get(it.ai_awareness_level or "", "MEDIUM"),
+            "ai_detection_method": "ML_MODEL",
+            "detected_at":         "",
+            "title":               f"{it.ai_trend_direction or 'Awareness'} awareness — {it.hcp_full_name}",
+            "description":         it.ai_aim_xr_activity or (
+                f"Awareness {it.ai_awareness_score}% ({it.ai_awareness_level}); "
+                f"{it.ai_trend_direction}, change {it.ai_score_change_pct}%."
+            ),
+            "hcp_full_name":       it.hcp_full_name,
+            "specialty":           it.specialty,
+            "ai_awareness_score":  it.ai_awareness_score,
+            "ai_awareness_level":  it.ai_awareness_level,
+            "ai_trend_direction":  it.ai_trend_direction,
+            "ai_score_change_pct": it.ai_score_change_pct,
+            "recommended_actions": ["Schedule Calls", "Review Later"] if declining else [],
+        }})
+    return cards
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertListResponse:
+def get_alerts(
+    db: Session, territory_ids: Optional[List[str]] = None, featured: bool = False
+) -> AlertListResponse:
     # ── Always get real DB count first (regardless of ML/featured path) ───────
     total_in_db = 0
     try:
@@ -770,21 +845,22 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
     except Exception as e:
         log.warning("Could not count DB alerts: %s", e)
 
-    # Alert_Id → affected HCP details (insight360_active_alerts_details bridge).
+    # Alert_Id → affected HCP details (insight360_active_alerts_details_dul bridge).
     # Built up-front: also fed into the GPT-4o enricher so each alert's language
     # is grounded in its own HCPs' specialties/segments/locations.
     affected_hcp_map = _affected_hcps_by_alert(db)
 
-    # ── STEP 1: Pre-computed DB alerts (insight360_active_alerts) — primary.
-    # Their Alert_Ids (AL-xxx) are what insight360_active_alerts_details maps
+    # ── STEP 1: Pre-computed DB alerts (insight360_active_alerts_dul) — primary.
+    # Their Alert_Ids (AL-xxx) are what insight360_active_alerts_details_dul maps
     # to HCPs, powering view_affected_hcp. ML detection is fallback only.
+    # territory_ids (bare Territory_Durable_Ids) filters to a manager/employee/
+    # territory selection; None = all alerts (the unfiltered default).
     rows: List[ActiveAlert] = []
     try:
-        rows = (
-            db.query(ActiveAlert)
-            .order_by(_SEVERITY_RANK, ActiveAlert.detected_at)
-            .all()
-        )
+        q = db.query(ActiveAlert).order_by(_SEVERITY_RANK, ActiveAlert.detected_at)
+        if territory_ids:
+            q = q.filter(ActiveAlert.territory_id.in_(territory_ids))
+        rows = q.all()
     except Exception as e:
         log.warning("DB query for alerts failed (%s), trying ML pipeline", e)
 
@@ -798,6 +874,12 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
             )
             for r in rows
         ]
+    elif territory_ids:
+        # Filtered to a specific territory selection that has no alerts — empty
+        # is the correct answer; don't fall back to the (territory-agnostic) ML
+        # pipeline, which would surface alerts from outside the selection.
+        log.info("No DB alerts for the selected territories — returning empty.")
+        alerts = []
     else:
         # ── STEP 2: Fall back to ML pipeline (IsolationForest + LinearRegression)
         log.info("No DB alerts — running ML detection")
@@ -861,8 +943,8 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
 
     # Payer alerts — directly from DB only, no sample fallback.
     # payer_alerts only ever shows real tier changes, so it's sourced entirely
-    # from insight360_payer_access (which has real tier_current/tier_previous),
-    # not from insight360_active_alerts (AL-xxx alerts have no tier column at
+    # from insight360_payer_access_dul (which has real tier_current/tier_previous),
+    # not from insight360_active_alerts_dul (AL-xxx alerts have no tier column at
     # all — e.g. AL-006 gets keyword-classified as "payer" but carries no
     # actual tier data, so it's excluded here rather than shown as null).
     payer_alerts: List[PayerAlertItem] = [
@@ -881,7 +963,7 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
             tier_current              = a.tier_current,
             tier_previous             = a.tier_previous,
         )
-        for a in _payer_alerts_from_db(db)
+        for a in _payer_alerts_from_db(db, territory_ids)
         if a.tier_current or a.tier_previous
     ]
 
@@ -890,15 +972,15 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
         hcp_awareness_alerts = hcp_awareness_alerts[:1]
         payer_alerts         = payer_alerts[:1]
 
-    # Plan_Durable_Id → affected HCP details (insight360_payer_access_details bridge)
+    # Plan_Durable_Id → affected HCP details (insight360_payer_access_details_dul bridge)
     plan_hcp_map = _affected_hcps_by_plan(db)
     # Alert_Id → reps to deploy to (HCP → territory → rep chain)
     deploy_map = _deploy_reps_by_alert(db)
 
     def _payer_hcps(alert_id: str) -> List[dict]:
         """Payer alerts come from two sources with different id shapes:
-        'PAYER-{plan_id}' (from insight360_payer_access) → plan bridge;
-        'AL-xxx' (payer-classified insight360_active_alerts) → alerts bridge."""
+        'PAYER-{plan_id}' (from insight360_payer_access_dul) → plan bridge;
+        'AL-xxx' (payer-classified insight360_active_alerts_dul) → alerts bridge."""
         if alert_id.startswith("PAYER-"):
             return plan_hcp_map.get(alert_id[len("PAYER-"):], [])
         return affected_hcp_map.get(alert_id, [])
@@ -949,8 +1031,8 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
                     "recommended_actions":      a.recommended_actions,
                     "view_hcp_list":            [{"name": h["name"].strip()} for h in _payer_hcps(a.alert_id)],
                     "resources":                _payer_resource_links(),
-                    # Real Formulary_Tier/Previous_Tier from insight360_payer_access when this
-                    # alert came from that table; null when it came from insight360_active_alerts
+                    # Real Formulary_Tier/Previous_Tier from insight360_payer_access_dul when this
+                    # alert came from that table; null when it came from insight360_active_alerts_dul
                     # (e.g. AL-006) — no tier column exists there and no HCP-based join to a
                     # payer plan exists either (verified: zero HCP overlap).
                     "tier_change": (
@@ -979,12 +1061,23 @@ def get_alerts(db: Session, territory_id: str, featured: bool = False) -> AlertL
             for i, a in enumerate(items, start=1)
         ]
 
+    # Competitive + HCP-awareness groups now mirror the Competitive Intel and
+    # HCP Awareness module tabs (same territory filter); payer stays sourced
+    # from the flagged payer rows above.
+    comp_cards  = _competitive_cards(db, territory_ids)
+    hcp_cards   = _hcp_awareness_cards(db, territory_ids)
+    payer_cards = _build_payer(payer_alerts)
+    if featured:
+        comp_cards  = comp_cards[:1]
+        hcp_cards   = hcp_cards[:1]
+        payer_cards = payer_cards[:1]
+
     from app.schemas.action_center import ActiveAlertSection
     return ActiveAlertListResponse(
         active_alerts=ActiveAlertSection(
-            competitive_alerts   = _build_competitive(competitive_alerts),
-            payer_alerts         = _build_payer(payer_alerts),
-            hcp_awareness_alerts = _build_hcp(hcp_awareness_alerts),
+            competitive_alerts   = comp_cards,
+            payer_alerts         = payer_cards,
+            hcp_awareness_alerts = hcp_cards,
         )
     )
 
