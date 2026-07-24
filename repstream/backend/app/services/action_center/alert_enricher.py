@@ -114,7 +114,23 @@ def enrich(alert, affected_hcps=None) -> dict:
         log.debug("Cache hit for %s", alert_id)
         return _CACHE[alert_id]
 
-    result = _stub(alert) if settings.LLM_STUB_MODE else _call_gpt4o(alert, affected_hcps)
+    if settings.LLM_STUB_MODE:
+        result = _stub(alert)
+        _CACHE[alert_id] = result
+        return result
+
+    try:
+        result = _call_gpt4o(alert, affected_hcps)
+    except Exception as exc:  # noqa: BLE001
+        # LLM unavailable (key expired / 429 / timeout): DON'T crash the endpoint.
+        # Return empty LLM-generated fields so the alert's DB-sourced structure
+        # still comes through (_build_alert_item falls back to the DB Alert_Title /
+        # Counter_Strategy for the other fields). Deliberately NOT cached, so this
+        # self-heals — the next request retries GPT-4o and fills the values in as
+        # soon as OpenAI is reachable again, with no restart needed.
+        log.warning("GPT-4o alert enrichment unavailable for %s (%s) — empty LLM fields.", alert_id, exc)
+        return {"ai_prescribing_drift_note": "", "ai_supporting_materials": []}
+
     _CACHE[alert_id] = result
     return result
 
