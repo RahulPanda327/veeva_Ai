@@ -697,21 +697,36 @@ def _deploy_reps_by_alert(db: Session) -> Dict[str, List[dict]]:
     One query for all alerts, grouped per alert per rep in Python.
     """
     try:
+        # The employee view has many rows per employee (history / duplicate src
+        # rows), so it must be deduped to ONE current row per (territory, employee)
+        # before joining — otherwise each rep fans out into dozens of identical
+        # deploy_to_field entries.
         sql = text("""
             SELECT
                 d.Alert_Id               AS alert_id,
                 c.Formatted_Name         AS hcp_name,
                 at2.Territory_Durable_Id AS territory_id,
-                e.Employee_Name          AS rep_name,
-                e.Email                  AS rep_email
+                e.rep_name,
+                e.rep_email
             FROM hub_insight360.insight360_active_alerts_details_dul d
             JOIN hub_insight360.vw_tdim_healthcarepractitioner_zenpep_reporting_dul c
               ON c.HCP_Durable_Id = d.HCP_Durable_Id
             LEFT JOIN hub_insight360.vw_account_territory_zenpep_reporting_dul at2
               ON at2.HCP_Durable_Id = d.HCP_Durable_Id
              AND at2.sales_force = 'Commercial_Sales_Field_Force'
-            LEFT JOIN hub_insight360.vw_tdim_employee_zenpep_reporting_dul e
-              ON e.Territory_Durable_Id = at2.Territory_Durable_Id
+            LEFT JOIN (
+                SELECT
+                    Territory_Durable_Id,
+                    Employee_Name AS rep_name,
+                    Email         AS rep_email,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY Territory_Durable_Id, Employee_Durable_Id
+                        ORDER BY Effective_Start_Date DESC, cre_dt DESC
+                    ) AS rn
+                FROM hub_insight360.vw_tdim_employee_zenpep_reporting_dul
+                WHERE salesforce = 'Commercial_Sales_Field_Force'
+            ) e
+              ON e.Territory_Durable_Id = at2.Territory_Durable_Id AND e.rn = 1
         """)
         grouped: Dict[str, Dict[tuple, dict]] = {}
         for row in db.execute(sql).mappings():
@@ -762,75 +777,6 @@ def _affected_hcps_by_plan(db: Session) -> Dict[str, List[dict]]:
     except Exception as exc:
         log.warning("Payer affected HCP lookup failed (%s).", exc)
         return {}
-
-
-# ── Rollup builders: Active Alerts' competitive + HCP-awareness groups are
-#    sourced live from those module tabs (same territory filter), so the page
-#    is one consistent filter context. Payer stays sourced from the flagged
-#    payer rows (see _payer_alerts_from_db). ───────────────────────────────────
-
-_AWARENESS_SEVERITY = {"Low": "HIGH", "Medium": "MEDIUM", "High": "LOW"}
-
-
-def _competitive_cards(db: Session, territory_ids: Optional[List[str]]) -> List[dict]:
-    """Competitive alert cards built from the Competitive Intel module's own
-    (territory-filtered) output — so Active Alerts mirrors that tab 1:1."""
-    from app.services.action_center.competitive_intel_svc import get_competitive_intel
-    resp = get_competitive_intel(db, territory_ids=territory_ids)
-    cards = []
-    for i, it in enumerate(resp.items, start=1):
-        cards.append({f"alert_{i}": {
-            "alert_type":                "competitive",
-            "alert_id":                  it.signal_id,
-            "ai_severity":               (it.risk_level or "MEDIUM"),
-            "ai_detection_method":       it.signal_type,
-            "detected_at":               it.signal_date,
-            "title":                     it.headline,
-            "description":               it.executive_summary,
-            "ai_affected_hcp_count":     0,
-            "ai_territory_reach":        it.territory_name or "",
-            "ai_rx_risk":                it.risk_level,
-            "ai_icd10_codes_affected":   [],
-            "ai_prescribing_drift_note": it.business_impact,
-            "ai_counter_script":         it.counter_strategy,
-            "ai_supporting_materials":   [],
-            "recommended_actions":       it.recommended_actions or [],
-            "field_force_talking_points": it.field_force_talking_points or [],
-            "competitor_brand":          it.competitor_brand,
-            "view_affected_hcp":         [],
-            "deploy_to_field":           [],
-        }})
-    return cards
-
-
-def _hcp_awareness_cards(db: Session, territory_ids: Optional[List[str]]) -> List[dict]:
-    """HCP-awareness alert cards built from the HCP Awareness module's own
-    (territory-filtered) output — so Active Alerts mirrors that tab 1:1."""
-    from app.services.action_center.hcp_awareness_svc import get_hcp_awareness
-    resp = get_hcp_awareness(db, territory_ids=territory_ids)
-    cards = []
-    for i, it in enumerate(resp.items, start=1):
-        declining = (it.ai_trend_direction or "") == "Declining"
-        cards.append({f"alert_{i}": {
-            "alert_type":          "hcp_awareness",
-            "alert_id":            f"AWARE-{it.hcp_full_name}",
-            "ai_severity":         _AWARENESS_SEVERITY.get(it.ai_awareness_level or "", "MEDIUM"),
-            "ai_detection_method": "ML_MODEL",
-            "detected_at":         "",
-            "title":               f"{it.ai_trend_direction or 'Awareness'} awareness — {it.hcp_full_name}",
-            "description":         it.ai_aim_xr_activity or (
-                f"Awareness {it.ai_awareness_score}% ({it.ai_awareness_level}); "
-                f"{it.ai_trend_direction}, change {it.ai_score_change_pct}%."
-            ),
-            "hcp_full_name":       it.hcp_full_name,
-            "specialty":           it.specialty,
-            "ai_awareness_score":  it.ai_awareness_score,
-            "ai_awareness_level":  it.ai_awareness_level,
-            "ai_trend_direction":  it.ai_trend_direction,
-            "ai_score_change_pct": it.ai_score_change_pct,
-            "recommended_actions": ["Schedule Calls", "Review Later"] if declining else [],
-        }})
-    return cards
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -1061,23 +1007,12 @@ def get_alerts(
             for i, a in enumerate(items, start=1)
         ]
 
-    # Competitive + HCP-awareness groups now mirror the Competitive Intel and
-    # HCP Awareness module tabs (same territory filter); payer stays sourced
-    # from the flagged payer rows above.
-    comp_cards  = _competitive_cards(db, territory_ids)
-    hcp_cards   = _hcp_awareness_cards(db, territory_ids)
-    payer_cards = _build_payer(payer_alerts)
-    if featured:
-        comp_cards  = comp_cards[:1]
-        hcp_cards   = hcp_cards[:1]
-        payer_cards = payer_cards[:1]
-
     from app.schemas.action_center import ActiveAlertSection
     return ActiveAlertListResponse(
         active_alerts=ActiveAlertSection(
-            competitive_alerts   = comp_cards,
-            payer_alerts         = payer_cards,
-            hcp_awareness_alerts = hcp_cards,
+            competitive_alerts   = _build_competitive(competitive_alerts),
+            payer_alerts         = _build_payer(payer_alerts),
+            hcp_awareness_alerts = _build_hcp(hcp_awareness_alerts),
         )
     )
 
