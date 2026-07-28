@@ -50,6 +50,7 @@ def _payer_resource_links() -> List[dict]:
 _DATE_FORMATS = [
     "%Y-%m-%d %H:%M",
     "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d",
     "%b %d, %Y at %I:%M %p",
     "%b %d, %Y at %I:%M%p",
 ]
@@ -1017,17 +1018,20 @@ def get_alerts(
     )
 
 
-def get_alert_summary(db: Session, territory_id: str) -> ActionCenterSummary:
-    """Separate endpoint — returns only the KPI summary tiles, no alert cards."""
+def get_alert_summary(
+    db: Session, territory_ids: Optional[List[str]] = None
+) -> ActionCenterSummary:
+    """KPI summary tiles. territory_ids (bare Territory_Durable_Ids) scopes the
+    counts to a manager/employee/territory selection so the tiles match the
+    filtered alert list; None = all alerts (unfiltered default)."""
     # DB alerts primary, ML fallback — must match get_alerts so KPIs agree with the list
     alerts: List[AlertItem] = []
     try:
         affected_hcp_map = _affected_hcps_by_alert(db)
-        rows = (
-            db.query(ActiveAlert)
-            .order_by(_SEVERITY_RANK, ActiveAlert.detected_at)
-            .all()
-        )
+        q = db.query(ActiveAlert).order_by(_SEVERITY_RANK, ActiveAlert.detected_at)
+        if territory_ids:
+            q = q.filter(ActiveAlert.territory_id.in_(territory_ids))
+        rows = q.all()
         alerts = [
             _build_alert_item(
                 r,
@@ -1039,7 +1043,9 @@ def get_alert_summary(db: Session, territory_id: str) -> ActionCenterSummary:
     except Exception as e:
         log.warning("DB query failed in summary: %s", e)
 
-    if not alerts:
+    # ML fallback only for the unfiltered default — a filtered selection with no
+    # alerts is a valid empty result (all counts 0), matching get_alerts.
+    if not alerts and not territory_ids:
         try:
             ml_detected = detect_alerts(db_engine)
             if ml_detected:
@@ -1054,15 +1060,23 @@ def get_alert_summary(db: Session, territory_id: str) -> ActionCenterSummary:
     unread         = len(alerts)
     now_str        = datetime.now(timezone.utc).strftime("%b %d, %Y %I:%M %p")
 
-    # ai_early_detection_weeks — avg of ML-detected lead weeks, 0.0 if none
-    lead_weeks_vals = [
-        a.ai_detection_lead_weeks for a in alerts
-        if getattr(a, "ai_detection_lead_weeks", None) is not None
+    # ai_early_detection_weeks — how long the earliest still-active alert has been
+    # open: take the MIN detected_at across the (already filter-scoped) alerts and
+    # count the whole weeks from that date to today. 0 if none are parseable.
+    detected_dates = [
+        d for d in (_parse_detected_at(a.detected_at) for a in alerts)
+        if d != datetime.min
     ]
-    early_detection = round(sum(lead_weeks_vals) / len(lead_weeks_vals), 1) if lead_weeks_vals else 0.0
+    if detected_dates:
+        earliest = min(detected_dates)
+        early_detection = max(0, (datetime.now() - earliest).days // 7)
+    else:
+        early_detection = 0
 
+    # Active Alerts counts ARE the ai_*_count fields below. module_counts (filled
+    # by the router) carries only the other 3 modules — no duplication.
     return ActionCenterSummary(
-        territory_id                = territory_id,
+        territory_id                = ",".join(territory_ids) if territory_ids else "",
         period                      = _current_period_label(),
         last_refresh                = now_str,
         ai_critical_count           = critical,

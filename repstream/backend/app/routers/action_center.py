@@ -1,7 +1,7 @@
 """Action Center — Launch & Market Defense router."""
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -20,9 +20,11 @@ from app.services.filters_service import (
     FilterSelection,
     filter_params,
     get_org_filters,
+    recall_filter,
     resolve_territories,
     salesforce_of,
 )
+from app.utils.response_cache import caller_key
 from app.services.action_center.alert_enricher import enrich_alert
 from app.services.action_center.alert_pipeline import run_pipeline
 from app.services.action_center.hcp_awareness_svc import get_hcp_awareness
@@ -97,16 +99,26 @@ def active_alerts(
     summary="Active Alerts — KPI summary tiles only",
 )
 def alert_summary(
+    request: Request,
+    sel: FilterSelection = Depends(filter_params),
     rep: RepIdentity = Depends(get_current_rep),
     db: Session = Depends(get_db),
 ):
     """KPI summary tiles plus the manager → employee → territory `filters` tree.
 
-    Always returns the rep's own tiles plus the `filters` tree for the dropdowns.
-    Selection is applied on the data endpoints (e.g. /competitive-intel?territory_id=),
-    not here."""
+    The tiles automatically mirror the Active Alerts list: if no filter is passed
+    here, the last filter this caller applied to `/action-center/alerts` is reused,
+    so the counts always match the filtered alert data. Passing an explicit
+    manager_id/employee_id/territory_id overrides that. Always includes `filters`."""
+    # No explicit filter on this request → reuse the caller's last list filter,
+    # so the summary tiles track whatever the Active Alerts list is showing.
+    if sel.is_empty():
+        remembered = recall_filter(caller_key(request))
+        if remembered is not None:
+            sel = remembered
+
     sf = salesforce_of(rep.territory_id)
-    summary = get_alert_summary(db, rep.territory_id)
+    summary = get_alert_summary(db, _scoped_territory_ids(db, rep, sel))
     summary.filters = OrgFilters(**get_org_filters(db, sf))
     return summary
 

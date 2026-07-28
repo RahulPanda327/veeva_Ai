@@ -49,6 +49,7 @@ from app.schemas.action_center import (
     HCPAwarenessResponse,
     ICD10Pattern,
     TrendPoint,
+    priority_counts_from,
 )
 
 log = logging.getLogger(__name__)

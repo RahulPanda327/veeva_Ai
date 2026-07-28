@@ -11,6 +11,62 @@ from app.schemas.filters import OrgFilters
 # Shared sub-objects
 # ──────────────────────────────────────────────────
 
+class PriorityCounts(BaseModel):
+    """Per-module count of items by priority tier, for the current filter scope.
+    `critical` is only ever > 0 for Active Alerts; the other modules top out at High."""
+    critical: int = 0
+    high: int = 0
+    medium: int = 0
+    low: int = 0
+    total: int = 0
+
+
+def priority_counts_from(levels) -> "PriorityCounts":
+    """Build a PriorityCounts by bucketing an iterable of priority-level strings
+    (case-insensitive: 'HIGH'/'High', 'MEDIUM', 'LOW', 'CRITICAL'). Anything that
+    doesn't match a tier is ignored but still counted in `total`."""
+    pc = PriorityCounts()
+    for lv in levels:
+        key = (lv or "").strip().upper()
+        if key == "CRITICAL":
+            pc.critical += 1
+        elif key == "HIGH":
+            pc.high += 1
+        elif key == "MEDIUM":
+            pc.medium += 1
+        elif key == "LOW":
+            pc.low += 1
+        pc.total += 1
+    return pc
+
+
+class ModuleSummary(BaseModel):
+    """Per-module summary (module is required on /alerts/summary): the priority
+    breakdown, the module's early-detection lead (weeks ahead of the traditional
+    6-8 week cycle), the HCP-drift count (Active Alerts only), and the
+    manager→employee→territory filters tree for the dropdowns. All scoped to the filter."""
+    critical: int = 0
+    high: int = 0
+    medium: int = 0
+    low: int = 0
+    total: int = 0
+    early_detection_weeks: float = 0.0
+    hcp_drift_detected: int = 0   # Active Alerts only (sum of affected HCPs in drift alerts); 0 for other modules
+    filters: Optional["OrgFilters"] = None   # the filter dropdown tree, so the page has its dropdowns from any module call
+
+
+def early_detection_weeks(intensities, lo: float = 2.0, hi: float = 6.0) -> float:
+    """Map an iterable of per-item change 'intensities' (each normalized to ~0..1)
+    to an early-detection lead in weeks. Bigger average drift → the AI caught it
+    with a larger lead over traditional 6-8 week reporting, so the value scales
+    from `lo` (subtle change) up to `hi` (pronounced change). Fully data-driven —
+    returns 0.0 only when there are no items."""
+    vals = [max(0.0, min(1.0, x)) for x in intensities if x is not None]
+    if not vals:
+        return 0.0
+    return round(lo + (sum(vals) / len(vals)) * (hi - lo), 1)
+
+
 class ICD10Affected(BaseModel):
     model_config = ConfigDict(json_schema_extra={
         "example": {"code": "K86.81", "label": "Exocrine pancreatic insufficiency", "hcp_count": 9}

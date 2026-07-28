@@ -4,7 +4,7 @@ import threading
 from datetime import date, datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -13,9 +13,11 @@ from app.services.filters_service import (
     FilterSelection,
     filter_params,
     get_org_filters,
+    recall_filter,
     resolve_territories,
     salesforce_of,
 )
+from app.utils.response_cache import caller_key
 from app.services.territory_prioritization.ai_score import enrich_all_hcps
 from app.services.territory_prioritization.data_ingestion import (
     get_current_and_prior_quarter,
@@ -44,6 +46,17 @@ _CACHE_TTL = 3600
 # concurrent warmers, and the request path never blocks on the LLM.
 _warming_territories: set[str] = set()
 _warm_lock = threading.Lock()
+
+# In-process fallback for the ranked-HCP lists. cache_get/cache_set are Redis-
+# backed and become silent no-ops when Redis isn't running (the case in this
+# environment), which would otherwise force a full recompute (load → features →
+# AI scoring) on every call that isn't served by the HTTP response cache — e.g.
+# /territory/summary, which is deliberately not response-cached so its tiles can
+# follow the remembered filter. This module-level dict keeps the computed lists in
+# THIS process's memory so those calls are cheap. Populated on first compute (incl.
+# during warm-up) and held until restart, matching the permanent response cache.
+_ranked_mem: dict[str, List[dict]] = {}
+_ranked_mem_lock = threading.Lock()
 
 
 def _maybe_warm_insights_async(territory_id: str, ranked: List[dict]) -> None:
@@ -102,7 +115,11 @@ def _ranked_for_selection(
 def _get_ranked_hcps(db: Session, territory_id: str, ref_date: date) -> List[dict]:
     """Load → feature engineer → AI score (all 4 techniques) → LLM insight → cache."""
     cache_key = territory_cache_key("territory:ranked_hcps_v3", territory_id)
+    # Redis first; fall back to the in-process copy when Redis is a no-op.
     cached = cache_get(cache_key)
+    if cached is None:
+        with _ranked_mem_lock:
+            cached = _ranked_mem.get(cache_key)
     if cached:
         # Re-attach insights so any GPT-4o text produced by the background warmer
         # since this list was cached is picked up (cache stores template-only).
@@ -192,26 +209,39 @@ def _get_ranked_hcps(db: Session, territory_id: str, ref_date: date) -> List[dic
         hcp["ai_is_ranked"] = True
 
     cache_set(cache_key, ranked, ttl=_CACHE_TTL)
+    with _ranked_mem_lock:
+        _ranked_mem[cache_key] = ranked
     return ranked
 
 
 @router.get("/summary", response_model=TerritorySummary)
 async def get_territory_summary(
+    request: Request,
+    sel: FilterSelection = Depends(filter_params),
     rep: RepIdentity = Depends(get_current_rep),
     db: Session = Depends(get_db),
 ):
     """KPI tiles: total HCPs, High/Med/Low counts, weekly target, last refresh.
 
-    Always returns the rep's own tiles plus the manager → employee → territory
-    `filters` tree the UI uses to build the cascading dropdowns. Selection is
-    applied on the data endpoints (e.g. /hcp-list?territory_id=), not here.
+    The tiles mirror the ranked HCP list: if no filter is passed here, the last
+    filter this caller applied to `/territory/hcp-list` is reused, so the counts
+    always match the filtered list. Passing an explicit manager_id/employee_id/
+    territory_id overrides that; unfiltered falls back to the rep's own territory.
+    Always includes the manager → employee → territory `filters` tree.
     """
+    # No explicit filter on this request → reuse the caller's last hcp-list filter,
+    # so the tiles track whatever the ranked list is showing.
+    if sel.is_empty():
+        remembered = recall_filter(caller_key(request), scope="territory")
+        if remembered is not None:
+            sel = remembered
+
     today = date.today()
     sf = salesforce_of(rep.territory_id)
-    ranked = _get_ranked_hcps(db, rep.territory_id, today)
+    ranked, scope_label = _ranked_for_selection(db, rep.territory_id, today, sel)
     (yr1, q1), _ = get_current_and_prior_quarter(today)
     period  = _quarter_label(yr1, q1)
-    summary = build_territory_summary(ranked, rep.territory_id, rep.territory_id, period)
+    summary = build_territory_summary(ranked, scope_label, scope_label, period)
     summary["last_refresh"] = datetime.now(timezone.utc).strftime("%b %d, %Y")
     summary["filters"] = get_org_filters(db, sf)
     return TerritorySummary(**summary)

@@ -27,10 +27,25 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from app.utils.cache_paths import cache_file
+from app.services.filters_service import FilterSelection, remember_filter
 
 logger = logging.getLogger(__name__)
 
 _CACHE_FILE = cache_file("endpoint_response_cache.json")
+
+# Modules whose KPI tiles must mirror their (filterable) list. Each list call
+# records the caller's filter under the module's scope; the matching summary is
+# never cached so it always recomputes against the latest remembered filter.
+#   list path suffix → filter-memory scope
+_LIST_PATHS = {
+    "/action-center/alerts": "alerts",
+    "/territory/hcp-list":   "territory",
+}
+#   summary path suffixes never cached (they reflect the remembered filter)
+_SUMMARY_SUFFIXES = (
+    "/action-center/alerts/summary",
+    "/territory/summary",
+)
 
 _cache: Dict[str, dict] = {}
 _io_lock = threading.Lock()
@@ -61,14 +76,20 @@ def _save() -> None:
 _load()
 
 
-def _cache_key(request: Request) -> str:
-    """Same user + same endpoint + same query = same cache entry.
-    "User" = the caller's Bearer token if present, else their IP."""
+def caller_key(request: Request) -> str:
+    """Identify the caller: their Bearer token if present, else their IP.
+    Shared by the response-cache key and the per-caller Active Alerts filter
+    memory so both scope to the same 'user'."""
     caller = request.headers.get("authorization")
     if not caller:
         caller = request.client.host if request.client else "anonymous"
+    return caller
+
+
+def _cache_key(request: Request) -> str:
+    """Same user + same endpoint + same query = same cache entry."""
     query = str(sorted(request.query_params.multi_items()))
-    return f"{request.method}:{request.url.path}:{query}:{caller}"
+    return f"{request.method}:{request.url.path}:{query}:{caller_key(request)}"
 
 
 def clear_all() -> int:
@@ -85,6 +106,26 @@ class DailyResponseCacheMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         if request.method != "GET":
+            return await call_next(request)
+
+        path = request.url.path
+
+        # Remember the module's filter on EVERY list call — even a cache hit, where
+        # the route handler never runs — so its summary always mirrors the most
+        # recent selection. (endswith excludes the '/summary' sub-paths.)
+        for suffix, scope in _LIST_PATHS.items():
+            if path.endswith(suffix):
+                qp = request.query_params
+                remember_filter(caller_key(request), FilterSelection(
+                    manager_id=qp.get("manager_id"),
+                    employee_id=qp.get("employee_id"),
+                    territory_id=qp.get("territory_id"),
+                ), scope=scope)
+                break
+
+        # Never cache a summary: it must recompute so its tiles reflect the latest
+        # remembered filter (and the live data).
+        if path.endswith(_SUMMARY_SUFFIXES):
             return await call_next(request)
 
         key = _cache_key(request)

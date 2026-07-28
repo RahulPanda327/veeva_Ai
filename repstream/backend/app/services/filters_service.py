@@ -51,6 +51,31 @@ def filter_params(
     exposes the same manager/employee/territory id filter without repeating the list."""
     return FilterSelection(manager_id=manager_id, employee_id=employee_id, territory_id=territory_id)
 
+
+# ── Per-caller "last applied filter" memory ───────────────────────────────────
+# A module's list endpoint and its KPI-tile summary are two independent, stateless
+# HTTP requests (e.g. /action-center/alerts + /alerts/summary, or /territory/hcp-
+# list + /territory/summary). So the tiles can follow the list without the UI
+# resending the filter on the summary call, we remember the most recent filter
+# each caller used on each module's list, and the summary falls back to it when no
+# explicit filter is passed. Keyed by (module scope, caller) — a tiny in-process
+# dict — so different modules' filters never overwrite each other.
+_LAST_FILTER: dict[tuple[str, str], FilterSelection] = {}
+_last_filter_lock = threading.Lock()
+
+
+def remember_filter(caller: str, sel: FilterSelection, scope: str = "alerts") -> None:
+    """Record the filter this caller just applied to `scope`'s list endpoint."""
+    with _last_filter_lock:
+        _LAST_FILTER[(scope, caller)] = sel
+
+
+def recall_filter(caller: str, scope: str = "alerts") -> Optional[FilterSelection]:
+    """The filter this caller last applied to `scope`'s list endpoint, or None."""
+    with _last_filter_lock:
+        return _LAST_FILTER.get((scope, caller))
+
+
 _CACHE: dict[str, dict] = {}
 _CACHE_TS: dict[str, float] = {}
 _TTL = 3600

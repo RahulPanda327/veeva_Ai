@@ -21,6 +21,7 @@ from app.models.competitive_intel import CompetitiveIntel
 from app.schemas.action_center import (
     CompetitiveIntelItem,
     CompetitiveIntelResponse,
+    priority_counts_from,
 )
 
 log = logging.getLogger(__name__)
