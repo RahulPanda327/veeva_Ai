@@ -7,7 +7,7 @@ AI Scoring Engine — Territory Prioritization
     Formula: score = (TRx_growth_norm × 0.60)
                    + (interaction_impact × 0.30)
                    + (decile_norm × 0.10)
-    Tier: HIGH ≥ 65 | MEDIUM 35-64 | LOW < 35
+    Tier: HIGH ≥ 55 | MEDIUM 30-54 | LOW < 30
 
   Technique 2 — Linear Regression Prediction (PREDICTIVE_ANALYTICS badge)
     Input:  monthly Rx history (12 months)
@@ -29,8 +29,8 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 WEIGHTS = {"trx_growth": 0.60, "interaction_impact": 0.30, "decile_score": 0.10}
-TIER_HIGH   = 65.0
-TIER_MEDIUM = 35.0
+TIER_HIGH   = 55.0   # HIGH  ≥ 55
+TIER_MEDIUM = 30.0   # MEDIUM 30–54, LOW < 30
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -249,7 +249,8 @@ def enrich_hcp_with_ai_scores(hcp: Dict, call_stats: Dict) -> Dict:
     hcp["call_count_90d"]      = call_stats.get("call_count_90d", 0)
     hcp["days_since_last_call"] = call_stats.get("days_since_last_call")
     hcp["last_call_outcome"]   = call_stats.get("last_outcome") or call_stats.get("last_call_outcome")
-    hcp["last_call_date"]      = call_stats.get("last_call_date") or hcp.get("last_call_date")
+    # last_call_date is the HCP dim view's Modified_Date, already formatted in
+    # feature_engineering — keep it (don't overwrite with the raw call-stats date).
 
     # Technique 2: linear regression
     history = hcp.get("monthly_rx_history") or []

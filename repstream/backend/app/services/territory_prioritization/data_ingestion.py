@@ -158,6 +158,7 @@ _HCP_PRIORITY_SQL = text(f"""
         b.Specialty_Description     AS specialty,
         a.Re_Engagement_Priority    AS priority,
         r.last_rx_date              AS last_rx_date,
+        TRY_CAST(b.Modified_Date AS DATE) AS last_call_date,
         r.total_rx_q1               AS rx_q1,
         r.total_rx_q4               AS rx_q4,
         b.Segment_Description       AS segment,

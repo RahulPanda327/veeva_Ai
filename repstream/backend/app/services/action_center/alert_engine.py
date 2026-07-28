@@ -1060,16 +1060,16 @@ def get_alert_summary(
     unread         = len(alerts)
     now_str        = datetime.now(timezone.utc).strftime("%b %d, %Y %I:%M %p")
 
-    # ai_early_detection_weeks — how long the earliest still-active alert has been
-    # open: take the MIN detected_at across the (already filter-scoped) alerts and
-    # count the whole weeks from that date to today. 0 if none are parseable.
+    # ai_early_detection_weeks — the span the alerts cover: take all (filter-scoped)
+    # alert dates, and compute whole weeks between the earliest and latest —
+    # (max - min) days // 7. 0 if fewer than two parseable dates.
     detected_dates = [
         d for d in (_parse_detected_at(a.detected_at) for a in alerts)
         if d != datetime.min
     ]
     if detected_dates:
-        earliest = min(detected_dates)
-        early_detection = max(0, (datetime.now() - earliest).days // 7)
+        span_days = (max(detected_dates) - min(detected_dates)).days
+        early_detection = max(0, span_days // 7)
     else:
         early_detection = 0
 

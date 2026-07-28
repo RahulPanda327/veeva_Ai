@@ -69,6 +69,14 @@ def build_hcp_features(
         # sample-derived monthly history estimate
         db_last_rx = _get("last_rx_date")
         last_rx_date_str = db_last_rx.strftime("%b %d, %Y") if db_last_rx is not None else None
+
+        # Last call date: the HCP dimension view's Modified_Date (real DB); fall
+        # back to the call-stats date only in sample/demo mode where it's absent.
+        db_last_call = _get("last_call_date")
+        if db_last_call is None:
+            db_last_call = last_call_dates.get(hcp_id)
+        last_call_date_str = db_last_call.strftime("%b %d, %Y") if db_last_call is not None else None
+
         if last_rx_date_str is None and monthly_history:
             for i in range(len(monthly_history) - 1, -1, -1):
                 if monthly_history[i] > 0:
@@ -113,7 +121,7 @@ def build_hcp_features(
             "competitor_rx":        competitor_rx,
             "competitor_brand":     rx.get("competitor_brand", "CREON"),
             "competitor_brand_share": compute_competitor_share(competitor_rx, rx_q1),
-            "last_call_date":       last_call_dates.get(hcp_id),
+            "last_call_date":       last_call_date_str,
             "monthly_rx_history":   monthly_history,
             "last_rx_date":         last_rx_date_str,
         })

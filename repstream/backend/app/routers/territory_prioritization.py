@@ -13,6 +13,7 @@ from app.services.filters_service import (
     FilterSelection,
     filter_params,
     get_org_filters,
+    normalize_territory_id,
     recall_filter,
     resolve_territories,
     salesforce_of,
@@ -86,6 +87,46 @@ def _quarter_label(year: int, q: int) -> str:
     return f"Q{q} {year} ({months[q]})"
 
 
+def _all_territory_ids(db: Session, sf: str) -> List[str]:
+    """Every territory in the org filter tree for this sales force, as piped ids —
+    i.e. the 'select everything' set. Used as the no-filter default so that
+    unfiltered == the whole team, and its counts equal the combined per-territory
+    filters (rather than just the rep's own territory)."""
+    tree = get_org_filters(db, sf)
+    out: List[str] = []
+    seen: set[str] = set()
+    for m in tree.get("manager_id", []):
+        for e in m.get("employee_id", []):
+            for t in e.get("territory_id", []):
+                piped = normalize_territory_id(t.get("territory_id"), sf)
+                if piped and piped not in seen:
+                    seen.add(piped)
+                    out.append(piped)
+    return out
+
+
+_LOW_PER_TERRITORY = 25   # LOW-tier HCPs shown per territory in scope (UI cap only)
+
+
+def _cap_low_priority(ranked: List[dict], scope_label: str) -> List[dict]:
+    """Trim the LOW-tier HCPs returned to the UI to 25 per territory in scope
+    (so 50 for the whole team, 25 for a single territory) while keeping every
+    HIGH/MEDIUM HCP. The ranked list is already sorted by tier then score, so the
+    LOW ones kept are the highest-scoring. This ONLY affects the /hcp-list payload
+    — the KPI tiles are computed from the full list, so their counts don't change."""
+    n_terr = len([t for t in (scope_label or "").split(",") if t]) or 1
+    low_cap = _LOW_PER_TERRITORY * n_terr
+    out: List[dict] = []
+    low_kept = 0
+    for h in ranked:
+        if h.get("ai_priority_tier") == "LOW":
+            if low_kept >= low_cap:
+                continue
+            low_kept += 1
+        out.append(h)
+    return out
+
+
 def _ranked_for_selection(
     db: Session,
     rep_territory: str,
@@ -95,11 +136,13 @@ def _ranked_for_selection(
     """Resolve a manager/employee/territory selection to its territories, load the
     ranked HCPs for each, and return (combined_deduped_hcps, scope_label).
 
-    Falls back to the rep's own territory when nothing is selected."""
+    No selection → ALL territories in the org tree (the whole team), so unfiltered
+    counts equal the union of the per-territory filters. Falls back to the rep's
+    own territory only if the tree is unavailable/empty."""
     sf = salesforce_of(rep_territory)
     territories = resolve_territories(db, sf, sel)
     if not territories:
-        territories = [rep_territory]
+        territories = _all_territory_ids(db, sf) or [rep_territory]
 
     combined: List[dict] = []
     seen: set[str] = set()
@@ -255,9 +298,14 @@ async def get_hcp_list(
 ):
     """Ranked HCP list with AI scores, predictive analytics, NLP classification, and GPT-4o insights.
 
+    LOW-priority HCPs are capped for the UI (25 per territory in scope — so 50 for
+    the whole team, 25 for a single territory); HIGH/MEDIUM are returned in full.
+    The KPI tiles (/territory/summary) count the FULL list, so they are unchanged.
+
     Scope with any of ?manager_id=/?employee_id=/?territory_id= or the matching
     ?manager_name=/?employee_name=/?territory_name= (id or name, case-insensitive)."""
-    ranked, _ = _ranked_for_selection(db, rep.territory_id, date.today(), sel)
+    ranked, scope_label = _ranked_for_selection(db, rep.territory_id, date.today(), sel)
+    ranked = _cap_low_priority(ranked, scope_label)
     return [HCPRankedItem(**h) for h in ranked]
 
 

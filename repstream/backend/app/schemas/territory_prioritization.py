@@ -46,6 +46,7 @@ class HCPRankedItem(BaseModel):
     rx_q1: float = Field(default=0.0, description="Total brand Rx in current quarter")
     rx_q4: float = Field(default=0.0, description="Total brand Rx in prior quarter")
     last_rx_date: Optional[str] = None           # most recent date with Zenpep Rx > 0
+    last_call_date: Optional[str] = None          # HCP dim view Modified_Date
     ai_priority_tier: Literal["HIGH", "MEDIUM", "LOW"] = "LOW"
     ai_generated_insight: Optional[str] = None
 
