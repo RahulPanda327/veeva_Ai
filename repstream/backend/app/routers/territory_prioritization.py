@@ -106,6 +106,7 @@ def _all_territory_ids(db: Session, sf: str) -> List[str]:
 
 
 _LOW_PER_TERRITORY = 25   # LOW-tier HCPs shown per territory in scope (UI cap only)
+_TIER_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}   # display order: HIGH → MEDIUM → LOW
 
 
 def _cap_low_priority(ranked: List[dict], scope_label: str) -> List[dict]:
@@ -152,6 +153,13 @@ def _ranked_for_selection(
                 continue
             seen.add(hcp["hcp_id"])
             combined.append(hcp)
+
+    # Each territory's list is already HIGH → MEDIUM → LOW, but concatenating
+    # multiple territories interleaves them. Re-sort the combined list so the whole
+    # output is globally ordered by tier (HIGH, then MEDIUM, then LOW), then by
+    # score within each tier. (Harmless no-op for a single-territory selection.)
+    combined.sort(key=lambda h: (_TIER_ORDER.get(h.get("ai_priority_tier"), 3),
+                                  -(h.get("ai_priority_score") or 0)))
     return combined, ",".join(territories)
 
 
@@ -285,6 +293,10 @@ async def get_territory_summary(
     (yr1, q1), _ = get_current_and_prior_quarter(today)
     period  = _quarter_label(yr1, q1)
     summary = build_territory_summary(ranked, scope_label, scope_label, period)
+    # total_hcps reflects what the UI actually renders: HIGH/MEDIUM in full + the
+    # capped LOW sample (same trimming /hcp-list applies). The tier counts stay the
+    # true full totals.
+    summary["total_hcps"] = len(_cap_low_priority(ranked, scope_label))
     summary["last_refresh"] = datetime.now(timezone.utc).strftime("%b %d, %Y")
     summary["filters"] = get_org_filters(db, sf)
     return TerritorySummary(**summary)

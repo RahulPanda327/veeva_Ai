@@ -1024,47 +1024,46 @@ def get_alert_summary(
     """KPI summary tiles. territory_ids (bare Territory_Durable_Ids) scopes the
     counts to a manager/employee/territory selection so the tiles match the
     filtered alert list; None = all alerts (unfiltered default)."""
-    # DB alerts primary, ML fallback — must match get_alerts so KPIs agree with the list
-    alerts: List[AlertItem] = []
+    # The KPI counts only need each alert's severity / type / affected-count / date.
+    # They do NOT need the LLM enrichment or per-alert ICD-10 lookups that the full
+    # alert cards use — building those here made the summary slow AND dependent on
+    # GPT-4o (every call retried the expired key → 429 per alert). We read the rows
+    # directly with the SAME severity/type logic as _build_alert_item, so the counts
+    # still match the alert list exactly, but with just one small query.
+    facts: List[tuple] = []   # (severity, alert_type, affected_hcp_count, detected_at)
     try:
-        affected_hcp_map = _affected_hcps_by_alert(db)
         q = db.query(ActiveAlert).order_by(_SEVERITY_RANK, ActiveAlert.detected_at)
         if territory_ids:
             q = q.filter(ActiveAlert.territory_id.in_(territory_ids))
-        rows = q.all()
-        alerts = [
-            _build_alert_item(
-                r,
-                enrich(r, affected_hcp_map.get(r.alert_id, [])),
-                _icd10_for_alert(db, r),
-            )
-            for r in rows
-        ]
+        for r in q.all():
+            severity_raw = (r.severity or "MEDIUM").upper()
+            severity = severity_raw if severity_raw in {"CRITICAL", "HIGH", "MEDIUM", "LOW"} else "MEDIUM"
+            alert_type = _classify_alert_type(r.title or "", (r.detection_method or "").strip().upper())
+            facts.append((severity, alert_type, int(r.ai_affected_hcp_count or 0), r.detected_at or ""))
     except Exception as e:
         log.warning("DB query failed in summary: %s", e)
 
     # ML fallback only for the unfiltered default — a filtered selection with no
     # alerts is a valid empty result (all counts 0), matching get_alerts.
-    if not alerts and not territory_ids:
+    if not facts and not territory_ids:
         try:
-            ml_detected = detect_alerts(db_engine)
-            if ml_detected:
-                alerts = [_build_ml_alert_item(ml, enrich(ml)) for ml in ml_detected]
+            for ml in detect_alerts(db_engine):
+                facts.append((ml.severity, ml.alert_type, ml.ai_affected_hcp_count, ml.detected_at))
         except Exception as e:
             log.warning("ML pipeline failed in summary: %s", e)
 
-    critical       = sum(1 for a in alerts if a.ai_severity == "CRITICAL")
-    high           = sum(1 for a in alerts if a.ai_severity == "HIGH")
-    medium         = sum(1 for a in alerts if a.ai_severity == "MEDIUM")
-    drift          = sum(a.ai_affected_hcp_count for a in alerts if a.alert_type == "HCP_DRIFT")
-    unread         = len(alerts)
+    critical       = sum(1 for s, t, c, d in facts if s == "CRITICAL")
+    high           = sum(1 for s, t, c, d in facts if s == "HIGH")
+    medium         = sum(1 for s, t, c, d in facts if s == "MEDIUM")
+    drift          = sum(c for s, t, c, d in facts if t == "HCP_DRIFT")
+    unread         = len(facts)
     now_str        = datetime.now(timezone.utc).strftime("%b %d, %Y %I:%M %p")
 
     # ai_early_detection_weeks — the span the alerts cover: take all (filter-scoped)
     # alert dates, and compute whole weeks between the earliest and latest —
     # (max - min) days // 7. 0 if fewer than two parseable dates.
     detected_dates = [
-        d for d in (_parse_detected_at(a.detected_at) for a in alerts)
+        d for d in (_parse_detected_at(dt) for (_, _, _, dt) in facts)
         if d != datetime.min
     ]
     if detected_dates:
