@@ -8,7 +8,7 @@ RepStream gives pharmaceutical sales reps GPT-4o-powered intelligence across fou
 
 - **Real DB data only, no fake fallbacks** — every module reads live from Azure Synapse (`hub_insight360` schema). Fields with no real source column return `null`/`""` instead of made-up values.
 - **GPT-4o insights grounded in real data** — every AI-generated field (counter-scripts, HCP insights, outreach emails, warm approaches) is prompted with that specific record's own numbers, never generic text.
-- **24h (configurable) response cache** — no Redis required for this; disk-persisted, survives `--reload` restarts.
+- **Permanent response cache** — no Redis required for this; disk-persisted, survives `--reload` restarts, no time-based expiry (cleared explicitly, not on a timer).
 - **Real downloadable payer-access documents** — served directly from the backend as clickable links.
 - **Background-warmed AI caches** — GPT-4o output for insights/approach briefs/emails is pre-generated and disk-cached so the UI never blocks on a live LLM call.
 
@@ -28,7 +28,7 @@ repstream/
 │   │   ├── schemas/                ← Pydantic response models
 │   │   ├── models/                 ← SQLAlchemy DB models (real Synapse column mappings)
 │   │   └── utils/
-│   │       ├── response_cache.py   ← 24h (configurable) GET-response cache, no Redis
+│   │       ├── response_cache.py   ← Permanent GET-response cache, no Redis, no expiry
 │   │       ├── auth.py             ← JWT auth + DEV_SKIP_AUTH bypass
 │   │       └── cache.py            ← Redis-based cache (currently unused/no-op)
 │   ├── scripts/
@@ -49,7 +49,7 @@ repstream/
 │   ├── .insight_cache.json         ← GPT-4o Territory insights (auto-created, git-ignored)
 │   ├── .warm_approach_cache.json   ← GPT-4o New Writer warm-approach text (auto-created, git-ignored)
 │   ├── .approach_email_cache.json  ← GPT-4o outreach email drafts (auto-created, git-ignored)
-│   ├── .endpoint_response_cache.json ← 24h response cache data (auto-created, git-ignored)
+│   ├── .endpoint_response_cache.json ← Permanent response cache data (auto-created, git-ignored)
 │   ├── requirements.txt
 │   └── .env                        ← You create this (see Step 2)
 └── docker-compose.yml
@@ -65,7 +65,7 @@ repstream/
 |---|---|---|
 | Python | 3.11+ | Backend |
 | ODBC Driver 17 | latest | Azure Synapse DB connection |
-| Redis | 7+ | Optional — only needed for Celery/legacy cache, not for the 24h response cache |
+| Redis | 7+ | Optional — only needed for Celery/legacy cache, not for the response cache |
 
 ---
 
@@ -96,10 +96,6 @@ DS_SCHEMA=ds_hub_syndb
 # ── OpenAI ─────────────────────────────────────────────────────────────────
 OPENAI_API_KEY=sk-your-openai-api-key-here
 OPENAI_MODEL=gpt-4o
-
-# ── Response Cache (no Redis needed) ─────────────────────────────────────
-# How long a GET endpoint's response is cached, in minutes. 1440 = 24 hours.
-RESPONSE_CACHE_TTL_MINUTES=1440
 
 # ── Auth ───────────────────────────────────────────────────────────────────
 JWT_SECRET=your-secret-key-here
@@ -144,7 +140,7 @@ python scripts/train_ml_models.py
 - Runs **Linear Regression** → detects gradual HCP prescribing drift
 - Saves 3 files to `repstream/backend/models/`
 
-> This is only a fallback path — Active Alerts primarily reads pre-computed alerts directly from `insight360_active_alerts` in Synapse. The ML pipeline only runs if that table is empty or unreachable.
+> This is only a fallback path — Active Alerts primarily reads pre-computed alerts directly from `insight360_active_alerts_dul` in Synapse. The ML pipeline only runs if that table is empty or unreachable.
 
 > To retrain with fresh data, run this script again — it deletes old files and retrains automatically.
 
@@ -197,42 +193,41 @@ Every endpoint returns its data directly — no wrapper object. A list endpoint 
 
 ## Caching — 4 disk-based caches (no Redis)
 
-RepStream has 4 separate local JSON caches, all living in `backend/` as git-ignored dotfiles, auto-created on first use:
+RepStream has 4 separate local JSON caches, all living in `backend/` as git-ignored dotfiles, auto-created on first use. **None of them expire on a timer** — every one is permanent until explicitly cleared:
 
-| File | What it holds | Expires on its own? |
-|---|---|---|
-| `.endpoint_response_cache.json` | Full HTTP response for every GET endpoint, keyed by `method + path + query params + caller` | Yes — after `RESPONSE_CACHE_TTL_MINUTES` (`.env`, default 1440 = 24h) |
-| `.insight_cache.json` | Territory Prioritization's GPT-4o HCP insights | **No** |
-| `.warm_approach_cache.json` | New Writer ID's GPT-4o warm-approach text | **No** |
-| `.approach_email_cache.json` | New Writer ID's GPT-4o outreach emails | **No** |
+| File | What it holds |
+|---|---|
+| `.endpoint_response_cache.json` | Full HTTP response for every GET endpoint, keyed by `method + path + query params + caller` |
+| `.insight_cache.json` | Territory Prioritization's GPT-4o HCP insights |
+| `.warm_approach_cache.json` | New Writer ID's GPT-4o warm-approach text |
+| `.approach_email_cache.json` | New Writer ID's GPT-4o outreach emails |
 
 **How the response cache behaves:**
 - **First hit**: runs the real query/LLM pipeline, stores the result, returns it.
-- **Repeat hit within the TTL window**: returns the stored response instantly — no DB or GPT-4o call.
-- **Repeat hit after the TTL expires**: the stale entry is deleted, a fresh one is computed and re-stored under the same key. This repeats indefinitely, on every request — it's not a one-time cache.
+- **Every repeat hit, forever**: returns the stored response instantly — no DB or GPT-4o call, no expiry check. Staleness is only ever resolved by an explicit clear (below), never automatically by time passing.
 
-**The 3 AI-generation caches never expire on their own.** Once GPT-4o writes something for an HCP, it's kept forever — regenerating means a real (slow, costs money) LLM call, so nothing clears them automatically. If you change a prompt in the code, old cached AI text for HCPs already generated will keep being served until you clear that cache by hand.
+**⚠️ Restarting the server does NOT clear any cache.** Every cache is reloaded from its disk file on startup — if the file still has entries, they come right back after a restart exactly as before.
 
-**⚠️ Restarting the server does NOT clear any cache.** Every cache is reloaded from its disk file on startup — if the file still has unexpired/uncleared entries, they come right back after a restart exactly as before. Restart and "fresh data" are unrelated; you must explicitly clear the cache to force new data.
+**Automatic refresh on every app startup**: `main.py`'s `lifespan` hook clears all 4 caches and re-warms them (via `scripts/refresh_cache.py`) every time the app starts or restarts — in a background thread, so server startup itself isn't blocked. This is the only built-in trigger; there's no scheduled/fixed clock time anywhere in the codebase.
 
-**To clear caches — read this before running:**
+**Manual clearing/warming**, from `repstream/backend/`:
 ```bash
-cd repstream/backend
+python scripts/clear_cache.py                # clear all 4 caches
+python scripts/clear_cache.py --response-only # only the response cache
+python scripts/clear_cache.py --ai-only       # only the 3 AI-generation caches
 
-# Clears ALL 4 caches at once (response cache + all 3 AI-generation caches)
-python scripts/clear_cache.py
+python scripts/warm_cache.py                                 # warm every territory (slow — real GPT-4o calls)
+python scripts/warm_cache.py --territory-id "FieldForce|A0E..." # warm just one territory (fast)
 
-# Narrower options:
-python scripts/clear_cache.py --expired         # response cache: only entries past their TTL; AI caches untouched
-python scripts/clear_cache.py --response-only   # only the response cache, skip the 3 AI-generation caches
-python scripts/clear_cache.py --ai-only         # only the 3 AI-generation caches, skip the response cache
+python scripts/refresh_cache.py               # clear + warm in one command (what startup uses internally)
 
 # Clears a LIVE running server's response-cache memory immediately, no restart needed
-# (only covers the response cache — the AI caches have no live-clear endpoint yet)
 curl -X POST http://localhost:8000/admin/cache/clear
 ```
 
-**Important**: `scripts/clear_cache.py` only touches the **disk files**. If the backend server is already running, it holds its own in-memory copy of every cache loaded at startup — clearing the files does not change what that running process is currently serving. After running the script, either **restart the server** (so it reloads the now-empty files) or, for the response cache specifically, hit `POST /admin/cache/clear` instead (no restart needed, but only affects that one cache).
+**Important**: `scripts/clear_cache.py` only touches the **disk files**. If the backend server is already running, it holds its own in-memory copy loaded at startup — clearing the files does not change what that running process is currently serving. Either restart the server, or use `POST /admin/cache/clear` for the response cache specifically (no restart needed).
+
+**Scheduling on a VM**: nothing in this codebase manages a schedule — set up your own cron/Task Scheduler entry on the deployment machine pointing at `python scripts/refresh_cache.py` (or `scripts/run_warm_cache.bat` on Windows) at whatever time/interval you want.
 
 ---
 
@@ -344,7 +339,7 @@ Authorization: Bearer <token>
 }
 ```
 
-> Alerts are plain arrays (no `alert_1`/`alert_2` wrapper keys). `payer_alerts` only ever includes alerts with a real `tier_change` sourced from `insight360_payer_access` — alerts with no source tier data are excluded rather than shown with a `null` tier_change. `deploy_to_field` is only meaningful when `"Deploy to Field"` appears in that alert's `recommended_actions`.
+> Alerts are plain arrays (no `alert_1`/`alert_2` wrapper keys). `payer_alerts` only ever includes alerts with a real `tier_change` sourced from `insight360_payer_access_dul` — alerts with no source tier data are excluded rather than shown with a `null` tier_change. `deploy_to_field` is only meaningful when `"Deploy to Field"` appears in that alert's `recommended_actions`.
 
 ---
 
@@ -357,7 +352,7 @@ Authorization: Bearer <token>
 | Linear Regression | `numpy.polyfit` | part of `detected_alerts.pkl` | Gradual HCP drift (fallback path only) |
 | GPT-4o | `openai` | no file (API call, disk-cached) | All language: titles, scripts, insights, outreach emails |
 
-> Active Alerts reads real pre-computed rows from `insight360_active_alerts` first — the ML pipeline above is a fallback used only if that table is empty or Synapse is unreachable.
+> Active Alerts reads real pre-computed rows from `insight360_active_alerts_dul` first — the ML pipeline above is a fallback used only if that table is empty or Synapse is unreachable.
 
 ---
 
@@ -369,7 +364,6 @@ Authorization: Bearer <token>
 | `HUB_SCHEMA`, `DS_SCHEMA` | Yes | Synapse schema names (default `hub_insight360` / `ds_hub_syndb`) |
 | `OPENAI_API_KEY` | Yes (unless `LLM_STUB_MODE=True`) | GPT-4o API key |
 | `JWT_SECRET` | Yes | JWT signing secret |
-| `RESPONSE_CACHE_TTL_MINUTES` | No | Default `1440` (24h). How long GET responses are cached — see [Response Caching](#response-caching-no-redis) |
 | `REDIS_URL` | No | Only used by Celery / the legacy `app/utils/cache.py`, not the response cache |
 | `LLM_STUB_MODE` | No | `True` = skip GPT-4o calls, return stub text (no API key needed, local dev) |
 | `DEV_SKIP_AUTH` | No | `True` = skip JWT auth, auto-login as `REP001` (**local dev only, never production**) |
