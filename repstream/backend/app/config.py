@@ -17,11 +17,50 @@ class Settings(BaseSettings):
     HUB_SCHEMA: str = "hub_insight360"
     DS_SCHEMA: str = "ds_hub_syndb"
 
+    # ── LLM providers (enable ONE with true) ──────────────────────────────────
+    # Keep all three configured; flip exactly one *_ENABLED to true to pick which
+    # one runs. If several are true, the first in this order wins: ollama → openai
+    # → groq. Each provider keeps its OWN model name + credentials.
+    OLLAMA_ENABLED: bool = True
+    OPENAI_ENABLED: bool = False
+    GROQ_ENABLED: bool = False
+
+    # Ollama (local)
+    OLLAMA_MODEL: str = "mistral:latest"
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+
     # OpenAI
-    OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o"
-    OPENAI_MAX_RETRIES: int = 3
-    OPENAI_TIMEOUT: int = 30
+    OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = ""   # optional: OpenAI-compatible gateway base URL
+
+    # Groq
+    GROQ_MODEL: str = "llama-3.1-8b-instant"
+    GROQ_API_KEY: str = ""
+
+    # Shared knobs
+    LLM_TIMEOUT: int = 120
+    LLM_MAX_RETRIES: int = 3
+
+    def active_llm(self) -> tuple[str, str]:
+        """Resolve (provider, model) from the *_ENABLED flags. First enabled in
+        priority order wins; falls back to Ollama if none are enabled."""
+        for provider, enabled, model in (
+            ("ollama", self.OLLAMA_ENABLED, self.OLLAMA_MODEL),
+            ("openai", self.OPENAI_ENABLED, self.OPENAI_MODEL),
+            ("groq",   self.GROQ_ENABLED,   self.GROQ_MODEL),
+        ):
+            if enabled:
+                return provider, model
+        return "ollama", self.OLLAMA_MODEL
+
+    @property
+    def LLM_PROVIDER(self) -> str:
+        return self.active_llm()[0]
+
+    @property
+    def LLM_MODEL(self) -> str:
+        return self.active_llm()[1]
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"

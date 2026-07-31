@@ -5,7 +5,7 @@ Competitive Intel service.
   1. AI Threat Scoring       — composite score from market_share + call_freq + signal_type
   2. ML Trend (LinReg)       — extrapolate market share loss 4 weeks out
   3. NLP Classification      — keyword-classify Signal_Description → threat category
-  4. GPT-4o                  — generate ai_title + ai_supporting_evidence
+  4. Ollama                  — generate ai_title + ai_supporting_evidence
 """
 from __future__ import annotations
 
@@ -23,10 +23,12 @@ from app.schemas.action_center import (
     CompetitiveIntelResponse,
     priority_counts_from,
 )
+from app.utils.db_retry import run_with_retry
+from app.utils.llm_client import normalize_str_list
 
 log = logging.getLogger(__name__)
 
-# ── in-process GPT-4o cache ──────────────────────────────────────────────────
+# ── in-process Ollama cache ──────────────────────────────────────────────────
 _CACHE: Dict[str, Any] = {}
 
 # ── NLP keyword taxonomy ─────────────────────────────────────────────────────
@@ -158,7 +160,7 @@ def _nlp_classify(description: Optional[str]) -> Tuple[str, str, List[str]]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Technique 4 — GPT-4o
+# Technique 4 — Ollama
 # ─────────────────────────────────────────────────────────────────────────────
 def _stub_gpt(row: CompetitiveIntel) -> Dict:
     comp      = (row.competitor_name or "Competitor").upper()
@@ -235,12 +237,8 @@ def _call_gpt4o(row: CompetitiveIntel) -> Dict[str, str]:
         return result
 
     try:
-        from openai import OpenAI
-        client = OpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            max_retries=settings.OPENAI_MAX_RETRIES,
-            timeout=settings.OPENAI_TIMEOUT,
-        )
+        from app.utils.llm_client import make_llm_client, normalize_str_list
+        client = make_llm_client()
         prompt = (
             "You are a pharmaceutical sales intelligence AI for ZENPEP (pancrelipase). "
             "Return ONLY valid JSON with these exact keys: "
@@ -260,18 +258,17 @@ def _call_gpt4o(row: CompetitiveIntel) -> Dict[str, str]:
             "why_it_matters: 1 sentence on why this matters for ZENPEP (can be empty string)."
         )
         resp = client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
+            model=settings.LLM_MODEL,
             response_format={"type": "json_object"},
             messages=[{"role": "user", "content": prompt}],
         )
         result = json.loads(resp.choices[0].message.content)
         for key in ("recommended_actions", "field_force_talking_points"):
-            if isinstance(result.get(key), str):
-                result[key] = [s.strip() for s in result[key].split("\n") if s.strip()]
+            result[key] = normalize_str_list(result.get(key))
         _CACHE[cache_key] = result
         return result
     except Exception as exc:
-        log.warning("GPT-4o error for %s: %s", row.intel_id, exc)
+        log.warning("Ollama error for %s: %s", row.intel_id, exc)
         result = _stub_gpt(row)
         _CACHE[cache_key] = result
         return result
@@ -303,7 +300,7 @@ def _build_item(row: CompetitiveIntel) -> CompetitiveIntelItem:
     risk_level   = _RISK_MAP.get(t_level, "MEDIUM")
     urgency_level = _URGENCY_MAP.get(risk_level, "STANDARD")
 
-    # GPT-4o enrichment
+    # Ollama enrichment
     gpt = _call_gpt4o(row)
 
     return CompetitiveIntelItem(
@@ -323,8 +320,8 @@ def _build_item(row: CompetitiveIntel) -> CompetitiveIntelItem:
         risk_level=risk_level,
         urgency_level=urgency_level,
         business_impact=gpt.get("business_impact"),
-        recommended_actions=gpt.get("recommended_actions") or [],
-        field_force_talking_points=gpt.get("field_force_talking_points") or [],
+        recommended_actions=normalize_str_list(gpt.get("recommended_actions")),
+        field_force_talking_points=normalize_str_list(gpt.get("field_force_talking_points")),
     )
 
 
@@ -354,16 +351,18 @@ def get_competitive_intel(
 ) -> CompetitiveIntelResponse:
     # territory_ids = bare Territory_Durable_Ids for a manager/employee/territory
     # selection; None = the unfiltered default (all rows, sample fallback if empty).
-    rows = []
     filtered = bool(territory_ids)
-    try:
+
+    def _fetch():
         query = db.query(CompetitiveIntel)
         if filtered:
-            rows = query.filter(CompetitiveIntel.territory_id.in_(territory_ids)).all()
-        else:
-            rows = query.all()
-    except Exception as e:
-        log.warning("Competitive intel DB query failed (%s), using sample data", e)
+            return query.filter(CompetitiveIntel.territory_id.in_(territory_ids)).all()
+        return query.all()
+
+    # Retry a dropped connection instead of silently serving _SAMPLE_CI_ROWS — a 200
+    # built from sample data gets stored by the permanent response cache and served
+    # as though it were real competitor intel.
+    rows = run_with_retry(db, _fetch, what="Competitive intel query")
 
     # Sample fallback only for the unfiltered default — a filtered selection with
     # no matching rows is a valid empty result, not a reason to show sample data.

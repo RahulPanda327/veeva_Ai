@@ -24,7 +24,7 @@ HCP Awareness Service — 4 techniques mapped to 4 UI badges
     ai_nlp_sentiment           = Negative / Neutral / Positive
     ai_nlp_keywords            = extracted key terms
 
-  TECHNIQUE 4 — GPT-4o  →  PREDICTIVE ANALYTICS / module-level
+  TECHNIQUE 4 — Ollama  →  PREDICTIVE ANALYTICS / module-level
     ai_aim_xr_activity     = HCP digital engagement description
     ai_recommended_action  = what rep should do now
 
@@ -39,10 +39,11 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-from openai import OpenAI
+from app.utils.llm_client import make_llm_client
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.utils.db_retry import run_with_retry
 from app.models.hcp_awareness import HCPAwareness
 from app.schemas.action_center import (
     HCPAwarenessItem,
@@ -266,7 +267,7 @@ def _nlp_analyze(root_cause: Optional[str]) -> tuple:
     return category, sentiment, keywords
 
 
-# ── TECHNIQUE 4 — GPT-4o Enricher ────────────────────────────────────────────
+# ── TECHNIQUE 4 — Ollama Enricher ────────────────────────────────────────────
 
 _SYSTEM = """You are a pharmaceutical sales intelligence AI for Zenpep (pancrelipase).
 Given HCP awareness data with ML analysis, return a JSON object with EXACTLY these 2 keys:
@@ -305,14 +306,10 @@ Generate the 2 fields as JSON."""
 
 
 def _call_gpt4o(row, latest_score, slope, risk_score, nlp_category, predicted_4w) -> dict:
-    client = OpenAI(
-        api_key=settings.OPENAI_API_KEY,
-        max_retries=settings.OPENAI_MAX_RETRIES,
-        timeout=settings.OPENAI_TIMEOUT,
-    )
-    log.info("GPT-4o enriching HCP %s", row.hcp_id)
+    client = make_llm_client()
+    log.info("Ollama enriching HCP %s", row.hcp_id)
     response = client.chat.completions.create(
-        model=settings.OPENAI_MODEL,
+        model=settings.LLM_MODEL,
         messages=[
             {"role": "system", "content": _SYSTEM},
             {"role": "user",   "content": _build_prompt(row, latest_score, slope, risk_score, nlp_category, predicted_4w or latest_score)},
@@ -345,7 +342,7 @@ def _enrich(row, latest_score, slope, risk_score, nlp_category, predicted_direct
         try:
             result = _call_gpt4o(row, latest_score, slope, risk_score, nlp_category, predicted_4w)
         except Exception as exc:
-            log.warning("GPT-4o failed for HCP %s (%s) — falling back to stub", row.hcp_id, exc)
+            log.warning("Ollama failed for HCP %s (%s) — falling back to stub", row.hcp_id, exc)
             result = _stub(row, nlp_category, predicted_direction)
     _CACHE[row.hcp_id] = result
     return result
@@ -435,14 +432,17 @@ def get_hcp_awareness(
     # territory_ids (bare Territory_Durable_Ids) filters on the table's own
     # Territory_Durable_Id column; None = all (the unfiltered default).
     filtered = bool(territory_ids)
-    rows: List[HCPAwareness] = []
-    try:
+
+    def _fetch():
         q = db.query(HCPAwareness)
         if filtered:
             q = q.filter(HCPAwareness.territory_id.in_(territory_ids))
-        rows = q.all()
-    except Exception as e:
-        log.warning("HCP awareness DB query failed (%s), using sample data", e)
+        return q.all()
+
+    # Retry a dropped connection instead of silently serving _SAMPLE_AWARENESS_ROWS —
+    # a 200 built from sample data gets stored by the permanent response cache and
+    # served as though it were real HCP data.
+    rows: List[HCPAwareness] = run_with_retry(db, _fetch, what="HCP awareness query")
 
     # Sample fallback only for the unfiltered default — a filtered selection with
     # no matching rows is a valid empty result.

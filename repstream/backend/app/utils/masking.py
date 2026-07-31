@@ -2,7 +2,7 @@
 
 Runs as ASGI middleware over the full JSON response body — catches brand
 names wherever they appear, whether from a structured DB field value (e.g.
-competitor_brand="CREON") or free-text GPT-4o-generated content (counter
+competitor_brand="CREON") or free-text Ollama-generated content (counter
 scripts, descriptions, email bodies, etc.). No product name — the client's
 own or a competitor's — reaches the client.
 

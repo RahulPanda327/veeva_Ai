@@ -43,7 +43,7 @@ router = APIRouter(prefix="/territory", tags=["Territory Prioritization"])
 
 _CACHE_TTL = 3600
 
-# Background GPT-4o insight warmer — dedup so one territory doesn't get multiple
+# Background Ollama insight warmer — dedup so one territory doesn't get multiple
 # concurrent warmers, and the request path never blocks on the LLM.
 _warming_territories: set[str] = set()
 _warm_lock = threading.Lock()
@@ -60,19 +60,29 @@ _ranked_mem: dict[str, List[dict]] = {}
 _ranked_mem_lock = threading.Lock()
 
 
+# Only the top-ranked HCPs per territory are ever shown (the list is capped to
+# HIGH + MEDIUM + a slice of LOW), so only THEY need a real LLM insight. Warming
+# every HCP (~500/territory) would fire hundreds of local-model calls that
+# saturate Ollama and starve every other endpoint — the rest keep the instant
+# rule-based template and get a real insight on-demand if a user opens them.
+_INSIGHT_WARM_LIMIT = 60
+
+
 def _maybe_warm_insights_async(territory_id: str, ranked: List[dict]) -> None:
-    """Fire-and-forget: generate real GPT-4o insights for any HCPs still on the
-    template, in a daemon thread. Next page load serves them from cache."""
+    """Fire-and-forget: generate real Ollama insights for the top displayed HCPs
+    still on the template, in a daemon thread. Next page load serves them from
+    cache. Capped to _INSIGHT_WARM_LIMIT so it can't flood a local model."""
+    subset = ranked[:_INSIGHT_WARM_LIMIT]
     with _warm_lock:
         if territory_id in _warming_territories:
             return
-        if count_uncached_insights(ranked) == 0:
+        if count_uncached_insights(subset) == 0:
             return
         _warming_territories.add(territory_id)
 
     def _run():
         try:
-            warm_insights(ranked)
+            warm_insights(subset)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Insight warmer failed for %s: %s", territory_id, exc)
         finally:
@@ -172,7 +182,7 @@ def _get_ranked_hcps(db: Session, territory_id: str, ref_date: date) -> List[dic
         with _ranked_mem_lock:
             cached = _ranked_mem.get(cache_key)
     if cached:
-        # Re-attach insights so any GPT-4o text produced by the background warmer
+        # Re-attach insights so any Ollama text produced by the background warmer
         # since this list was cached is picked up (cache stores template-only).
         generate_insights_for_list(cached)
         _maybe_warm_insights_async(territory_id, cached)
@@ -249,7 +259,7 @@ def _get_ranked_hcps(db: Session, territory_id: str, ref_date: date) -> List[dic
     # Enrich with all 4 AI/ML techniques (scores + prediction + NLP + badges)
     ranked = enrich_all_hcps(features, call_stats_map)
 
-    # Attach insights READ-ONLY (cached real GPT-4o text, else instant template),
+    # Attach insights READ-ONLY (cached real Ollama text, else instant template),
     # then kick off background generation for any HCP still on the template.
     generate_insights_for_list(ranked)
     _maybe_warm_insights_async(territory_id, ranked)
@@ -308,7 +318,7 @@ async def get_hcp_list(
     rep: RepIdentity = Depends(get_current_rep),
     db: Session = Depends(get_db),
 ):
-    """Ranked HCP list with AI scores, predictive analytics, NLP classification, and GPT-4o insights.
+    """Ranked HCP list with AI scores, predictive analytics, NLP classification, and Ollama insights.
 
     LOW-priority HCPs are capped for the UI (25 per territory in scope — so 50 for
     the whole team, 25 for a single territory); HIGH/MEDIUM are returned in full.
@@ -327,7 +337,7 @@ async def regenerate_hcp_insight(
     rep: RepIdentity = Depends(get_current_rep),
     db: Session = Depends(get_db),
 ):
-    """On-demand: regenerate GPT-4o insight for a single HCP."""
+    """On-demand: regenerate Ollama insight for a single HCP."""
     ranked = _get_ranked_hcps(db, rep.territory_id, date.today())
     hcp = next((h for h in ranked if h["hcp_id"] == hcp_id), None)
     if hcp is None:

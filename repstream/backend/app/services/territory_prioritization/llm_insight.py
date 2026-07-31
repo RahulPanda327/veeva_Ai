@@ -1,4 +1,4 @@
-"""GPT-4o insight generation for Territory Prioritization."""
+"""Ollama insight generation for Territory Prioritization."""
 from __future__ import annotations
 
 import json
@@ -15,7 +15,7 @@ from app.utils.cache_paths import cache_file
 
 logger = logging.getLogger(__name__)
 
-# In-process cache of generated insights, persisted to disk so warmed GPT-4o
+# In-process cache of generated insights, persisted to disk so warmed Ollama
 # text survives uvicorn --reload restarts (no Redis in this deployment).
 _INSIGHT_CACHE: Dict[str, Any] = {}
 _CACHE_FILE = cache_file("insight_cache.json")   # backend/cache/insight_cache.json
@@ -134,7 +134,7 @@ def _rule_based_insight(hcp: Dict) -> Tuple[str, Optional[str]]:
     )
 
 
-# ── Direct GPT-4o call (bypasses Redis, uses in-memory cache) ─────────────────
+# ── Direct Ollama call (bypasses Redis, uses in-memory cache) ─────────────────
 
 def _build_prompt(hcp: Dict) -> str:
     last_call_str = str(hcp.get("last_call_date")) if hcp.get("last_call_date") else "no recent call"
@@ -176,14 +176,10 @@ def _call_gpt4o(hcp: Dict) -> Tuple[str, Optional[str]]:
         return insight, highlight
 
     try:
-        from openai import OpenAI
-        client = OpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            max_retries=settings.OPENAI_MAX_RETRIES,
-            timeout=settings.OPENAI_TIMEOUT,
-        )
+        from app.utils.llm_client import make_llm_client
+        client = make_llm_client()
         resp = client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
+            model=settings.LLM_MODEL,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": _SYSTEM},
@@ -196,7 +192,7 @@ def _call_gpt4o(hcp: Dict) -> Tuple[str, Optional[str]]:
         insight   = str(data.get("insight", ""))
         highlight = data.get("highlight")
     except Exception as exc:
-        logger.warning("GPT-4o insight failed for %s: %s", hcp["hcp_id"], exc)
+        logger.warning("Ollama insight failed for %s: %s", hcp["hcp_id"], exc)
         insight, highlight = _rule_based_insight(hcp)
 
     _INSIGHT_CACHE[cache_key] = {"insight": insight, "highlight": highlight}
@@ -221,11 +217,11 @@ def generate_insights_for_list(hcps: List[Dict]) -> List[Dict]:
     """
     List view — READ ONLY. Never calls the LLM inline (that would block the
     request and could take minutes for a large territory). For each HCP:
-      • if the background warmer has already produced a real GPT-4o insight for
+      • if the background warmer has already produced a real Ollama insight for
         this HCP at its current priority score, serve that from cache;
       • otherwise fall back to the instant rule-based template.
     Real insights fill in progressively as warm_insights() completes in the
-    background — subsequent page loads show more genuine GPT-4o text.
+    background — subsequent page loads show more genuine Ollama text.
     """
     for hcp in hcps:
         cached = _INSIGHT_CACHE.get(_insight_cache_key(hcp))
@@ -244,13 +240,13 @@ def generate_insights_for_list(hcps: List[Dict]) -> List[Dict]:
 
 
 def count_uncached_insights(hcps: List[Dict]) -> int:
-    """How many HCPs still need a real GPT-4o insight generated."""
+    """How many HCPs still need a real Ollama insight generated."""
     return sum(1 for hcp in hcps if _insight_cache_key(hcp) not in _INSIGHT_CACHE)
 
 
 def warm_insights(hcps: List[Dict]) -> int:
     """
-    Background pre-generation: produce a real GPT-4o insight for every HCP that
+    Background pre-generation: produce a real Ollama insight for every HCP that
     isn't cached yet, in parallel, writing results into _INSIGHT_CACHE. Intended
     to run in a daemon thread (see the router's warmer), NOT in the request path.
     _call_gpt4o handles its own caching and falls back to the template on error.
@@ -269,7 +265,7 @@ def warm_insights(hcps: List[Dict]) -> int:
                 _save_insight_cache()   # survive a mid-warm restart
                 logger.info("Insight warm progress: %d/%d", done, len(pending))
     _save_insight_cache()
-    logger.info("Warmed %d GPT-4o insights.", len(pending))
+    logger.info("Warmed %d Ollama insights.", len(pending))
     return len(pending)
 
 

@@ -20,7 +20,7 @@ AI Scoring Engine — Territory Prioritization
             urgency (Immediate / This Week / This Month / Maintain)
             peer_match_hint for New Writers
 
-  Technique 4 — GPT-4o Insight (AI_INSIGHT badge) — in llm_insight.py
+  Technique 4 — Ollama Insight (AI_INSIGHT badge) — in llm_insight.py
 """
 from __future__ import annotations
 

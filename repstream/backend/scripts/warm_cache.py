@@ -167,8 +167,13 @@ def warm_response_cache(base_url: str) -> None:
         )
         return
 
+    # HCP Awareness / Competitive Intel / Payer Access enrich each row via the LLM
+    # inline. On a local Ollama model that's ~30-60s per row, so warming an endpoint
+    # (up to ~15 rows) can take several minutes — far beyond the old 120s. Give the
+    # background warm a generous per-request timeout so those endpoints finish and
+    # populate the in-process caches (after which real requests are instant).
     log.info("Warming response cache via live server at %s ...", base_url)
-    with httpx.Client(base_url=base_url, timeout=120) as client:
+    with httpx.Client(base_url=base_url, timeout=900) as client:
         # 1) Unfiltered baseline FIRST — restores the ~3-min 'app ready' timing.
         for path in _RESPONSE_CACHE_ENDPOINTS:
             try:

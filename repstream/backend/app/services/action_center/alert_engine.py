@@ -16,11 +16,11 @@ Active Alerts engine — full pipeline:
     recommended_actions  ← rule-based on severity (not DB string)
 
   STEP 3 — LLM (language keys)
-    title                ← GPT-4o (specific, data-driven)
-    description          ← GPT-4o (2-sentence narrative)
-    ai_prescribing_drift_note ← GPT-4o
-    ai_counter_script    ← GPT-4o (actionable rep script)
-    ai_supporting_materials   ← GPT-4o
+    title                ← Ollama (specific, data-driven)
+    description          ← Ollama (2-sentence narrative)
+    ai_prescribing_drift_note ← Ollama
+    ai_counter_script    ← Ollama (actionable rep script)
+    ai_supporting_materials   ← Ollama
 
   STEP 4 — STATE FLAGS (Python defaults)
     is_acknowledged / is_dismissed / is_deployed → False
@@ -68,6 +68,7 @@ from sqlalchemy.orm import Session
 
 log = logging.getLogger(__name__)
 
+from app.utils.db_retry import run_with_retry
 from app.models.active_alerts import ActiveAlert
 from app.models.territory_prioritization import HealthcarePractitioner
 from app.services.action_center.alert_enricher import enrich
@@ -500,7 +501,7 @@ def _impact_score(alert: AlertItem) -> tuple:
 # ── ML alert builder (DetectedAlert → AlertItem) ─────────────────────────────
 
 def _build_ml_alert_item(ml: DetectedAlert, ai: dict) -> AlertItem:
-    """Builds AlertItem from ML-detected alert + GPT-4o language fields."""
+    """Builds AlertItem from ML-detected alert + Ollama language fields."""
     return AlertItem(
         alert_id                  = ml.alert_id,
         alert_type                = ml.alert_type,
@@ -541,7 +542,7 @@ def _build_alert_item(
     ai_detect_method = _DETECTION_MAP.get(raw_method, "AUTO_DETECTED")
     alert_type       = _classify_alert_type(row.title or "", raw_method)
 
-    # STEP 3 — language from GPT-4o
+    # STEP 3 — language from Ollama
     title         = ai.get("title") or row.title or ""
     description   = ai.get("description") or row.territory_name or ""
     drift_note    = ai.get("ai_prescribing_drift_note")
@@ -793,7 +794,7 @@ def get_alerts(
         log.warning("Could not count DB alerts: %s", e)
 
     # Alert_Id → affected HCP details (insight360_active_alerts_details_dul bridge).
-    # Built up-front: also fed into the GPT-4o enricher so each alert's language
+    # Built up-front: also fed into the Ollama enricher so each alert's language
     # is grounded in its own HCPs' specialties/segments/locations.
     affected_hcp_map = _affected_hcps_by_alert(db)
 
@@ -811,13 +812,28 @@ def get_alerts(
     except Exception as e:
         log.warning("DB query for alerts failed (%s), trying ML pipeline", e)
 
+    # ── DB-FIRST ─────────────────────────────────────────────────────────────
+    # Every remaining DB read is done HERE, before any LLM call. Otherwise the
+    # connection sits idle for minutes while a local model runs, Synapse drops it,
+    # and the next query fails — which corrupts the response AND its cached copy.
+    # Doing all DB work first means the enrichment (below) touches no DB, so the
+    # endpoint always completes and stores a correct response.
+    icd10_map: Dict[str, List[ICD10Affected]] = {}
+    try:
+        icd10_map = {r.alert_id: _icd10_for_alert(db, r) for r in rows}
+    except Exception as e:
+        log.warning("ICD-10 precompute failed (%s)", e)
+    payer_source = _payer_alerts_from_db(db, territory_ids)
+    plan_hcp_map = _affected_hcps_by_plan(db)
+    deploy_map   = _deploy_reps_by_alert(db)
+
     if rows:
         log.info("Using %d DB alerts", len(rows))
         alerts = [
             _build_alert_item(
                 r,
                 enrich(r, affected_hcp_map.get(r.alert_id, [])),
-                _icd10_for_alert(db, r),
+                icd10_map.get(r.alert_id, []),
             )
             for r in rows
         ]
@@ -910,7 +926,7 @@ def get_alerts(
             tier_current              = a.tier_current,
             tier_previous             = a.tier_previous,
         )
-        for a in _payer_alerts_from_db(db, territory_ids)
+        for a in payer_source
         if a.tier_current or a.tier_previous
     ]
 
@@ -919,10 +935,8 @@ def get_alerts(
         hcp_awareness_alerts = hcp_awareness_alerts[:1]
         payer_alerts         = payer_alerts[:1]
 
-    # Plan_Durable_Id → affected HCP details (insight360_payer_access_details_dul bridge)
-    plan_hcp_map = _affected_hcps_by_plan(db)
-    # Alert_Id → reps to deploy to (HCP → territory → rep chain)
-    deploy_map = _deploy_reps_by_alert(db)
+    # plan_hcp_map and deploy_map were already computed up-front (DB-FIRST above),
+    # so nothing here touches the DB after the LLM enrichment.
 
     def _payer_hcps(alert_id: str) -> List[dict]:
         """Payer alerts come from two sources with different id shapes:
@@ -1027,15 +1041,22 @@ def get_alert_summary(
     # The KPI counts only need each alert's severity / type / affected-count / date.
     # They do NOT need the LLM enrichment or per-alert ICD-10 lookups that the full
     # alert cards use — building those here made the summary slow AND dependent on
-    # GPT-4o (every call retried the expired key → 429 per alert). We read the rows
+    # Ollama (every call retried the expired key → 429 per alert). We read the rows
     # directly with the SAME severity/type logic as _build_alert_item, so the counts
     # still match the alert list exactly, but with just one small query.
     facts: List[tuple] = []   # (severity, alert_type, affected_hcp_count, detected_at)
-    try:
+
+    def _fetch_alert_rows():
         q = db.query(ActiveAlert).order_by(_SEVERITY_RANK, ActiveAlert.detected_at)
         if territory_ids:
             q = q.filter(ActiveAlert.territory_id.in_(territory_ids))
-        for r in q.all():
+        return q.all()
+
+    try:
+        # Retry a dropped connection rather than reporting 0 counts. facts is built
+        # from the returned rows (not appended to inside the retried call), so a
+        # retry can't double-count.
+        for r in run_with_retry(db, _fetch_alert_rows, what="Alert summary query"):
             severity_raw = (r.severity or "MEDIUM").upper()
             severity = severity_raw if severity_raw in {"CRITICAL", "HIGH", "MEDIUM", "LOW"} else "MEDIUM"
             alert_type = _classify_alert_type(r.title or "", (r.detection_method or "").strip().upper())

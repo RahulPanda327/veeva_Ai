@@ -48,13 +48,13 @@ router = APIRouter(prefix="/new-writers", tags=["New Writer Identification"])
 
 _CACHE_TTL = 3600
 
-# Background GPT-4o warm-approach warmer — one per territory at a time
+# Background Ollama warm-approach warmer — one per territory at a time
 _warming_territories: set = set()
 _warm_lock = threading.Lock()
 
 
 def _maybe_warm_approaches_async(territory_id: str, candidates: List[dict]) -> None:
-    """Fire-and-forget: GPT-4o warm approaches for candidates still null.
+    """Fire-and-forget: Ollama warm approaches for candidates still null.
     Next page load serves them from the persisted cache."""
     needs_briefs = sum(1 for c in candidates if c.get("approach_brief") is None)
     with _warm_lock:
@@ -94,7 +94,7 @@ def _enrich_candidates(
     functions' signatures; none of them actually filter by it (peer_network's
     load_peer_matches already scopes to the candidates' own hcp_ids).
 
-    block_on_ai=True waits for GPT-4o warm-approach/brief generation to finish
+    block_on_ai=True waits for Ollama warm-approach/brief generation to finish
     before returning, instead of the normal fire-and-forget background warmer.
     Used only by the startup pre-warm pass (see warm_all_territory_candidates)
     so the per-territory cache is stored fully populated — never with nulls
@@ -119,7 +119,7 @@ def _enrich_candidates(
         c["total_in_class_rx"]      = float(c.get("total_in_class_rx") or c.get("in_class_rx_q1", 0) or 0)
 
     # Warm approach text: real Warm_Approach_Text DB value (KPI 7) wins when a
-    # peer match exists; otherwise the cached GPT-4o generation (attach below).
+    # peer match exists; otherwise the cached Ollama generation (attach below).
     for c in enriched:
         c["ai_warm_approach_text"] = c.get("ai_peer_rationale")
         c["ai_approach_highlight"] = None
@@ -163,10 +163,10 @@ def _get_candidates(db: Session, territory_id: str) -> List[dict]:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Per-territory candidate cache — persisted to disk as JSON, same style as the
-# GPT-4o warm-approach / approach-brief caches (approach_brief.py).
+# Ollama warm-approach / approach-brief caches (approach_brief.py).
 #
 # Flow: on startup, warm_all_territory_candidates() CLEARS this, regenerates
-# every territory's candidate list (live Synapse detection + full GPT-4o
+# every territory's candidate list (live Synapse detection + full Ollama
 # enrichment, blocking so nothing is null), and writes it to
 # .new_writer_candidates_cache.json. At request time the filter reads ONLY from
 # this cache (in memory, loaded from that JSON) — it never regenerates at the
@@ -206,7 +206,7 @@ _load_candidate_cache()
 
 
 def _generate_candidates_for_territory(db: Session, territory_id: str, sf: str) -> List[dict]:
-    """Live-detect + fully enrich (blocking on GPT-4o) the candidates for ONE
+    """Live-detect + fully enrich (blocking on Ollama) the candidates for ONE
     real territory. Generation only — used by the startup warm-up; the request
     path never calls this, it reads the cache."""
     hcp_ids = hcps_for_territories(db, [normalize_territory_id(territory_id, sf)])
@@ -221,16 +221,16 @@ def _generate_candidates_for_territory(db: Session, territory_id: str, sf: str) 
 
 def warm_all_territory_candidates(db: Session, max_workers: int = 3) -> None:
     """Startup warm-up: CLEAR the previous candidate cache, regenerate every
-    territory's list fresh (live detection + full GPT-4o enrichment), and save
+    territory's list fresh (live detection + full Ollama enrichment), and save
     it to .new_writer_candidates_cache.json — so the filter can serve straight
     from that JSON without regenerating.
 
     Must run IN-PROCESS (see main.py's startup thread) so it populates THIS
     running server's _CANDIDATE_CACHE, not a subprocess's separate copy.
-    Regeneration is fast after the first run because the per-HCP GPT-4o text
+    Regeneration is fast after the first run because the per-HCP Ollama text
     (warm approach + email) is itself disk-cached by hcp_id in approach_brief.py
     — so a restart re-runs the Synapse queries + GPT cache hits, not fresh
-    GPT-4o calls. Territories run a few at a time, each with its own DB session
+    Ollama calls. Territories run a few at a time, each with its own DB session
     (SQLAlchemy sessions aren't thread-safe)."""
     from concurrent.futures import ThreadPoolExecutor
     from app.database import SessionLocal
@@ -309,7 +309,7 @@ async def generate_warm_approach_brief(
     rep: RepIdentity = Depends(get_current_rep),
     db: Session = Depends(get_db),
 ):
-    """On-demand: GPT-4o warm approach brief for a single new writer candidate."""
+    """On-demand: Ollama warm approach brief for a single new writer candidate."""
     candidates = _get_candidates(db, rep.territory_id)
     hcp = next((c for c in candidates if c["hcp_id"] == hcp_id), None)
     if hcp is None:

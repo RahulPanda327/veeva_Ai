@@ -1,8 +1,8 @@
 """Warm approach generation for new writer candidates (Module 2).
 
-List view: GPT-4o warm approach per HCP from their real data — background-warmed,
+List view: Ollama warm approach per HCP from their real data — background-warmed,
 persisted to disk. DB Warm_Approach_Text (insight360_peer_match_dul) wins when present.
-On-demand: GPT-4o full brief via 'Generate Approach Brief' button.
+On-demand: Ollama full brief via 'Generate Approach Brief' button.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 _BRIEF_CACHE: Dict[str, Dict] = {}
 
-# ── GPT-4o warm approach cache (persisted, same pattern as territory insights) ─
+# ── Ollama warm approach cache (persisted, same pattern as territory insights) ─
 _WARM_CACHE: Dict[str, Dict] = {}
 _WARM_CACHE_FILE = cache_file("warm_approach_cache.json")
 _warm_io_lock = threading.Lock()
@@ -102,20 +102,16 @@ def _build_warm_prompt(hcp: Dict) -> str:
 
 
 def _call_gpt4o_warm(hcp: Dict) -> Optional[Dict]:
-    """One GPT-4o call → {"warm_approach", "highlight"}. Caches on success only."""
+    """One Ollama call → {"warm_approach", "highlight"}. Caches on success only."""
     key = _warm_key(hcp)
     cached = _WARM_CACHE.get(key)
     if cached:
         return cached
     try:
-        from openai import OpenAI
-        client = OpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            max_retries=settings.OPENAI_MAX_RETRIES,
-            timeout=settings.OPENAI_TIMEOUT,
-        )
+        from app.utils.llm_client import make_llm_client
+        client = make_llm_client()
         resp = client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
+            model=settings.LLM_MODEL,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": _WARM_SYSTEM},
@@ -127,16 +123,16 @@ def _call_gpt4o_warm(hcp: Dict) -> Optional[Dict]:
         data = json.loads(resp.choices[0].message.content)
         text = str(data.get("warm_approach", ""))
         if not text:
-            raise ValueError("empty warm_approach in GPT-4o response")
+            raise ValueError("empty warm_approach in Ollama response")
         result = {"warm_approach": text, "highlight": data.get("highlight")}
         _WARM_CACHE[key] = result
         return result
     except Exception as exc:  # noqa: BLE001
-        logger.warning("GPT-4o warm approach failed for %s: %s", hcp.get("hcp_id"), exc)
+        logger.warning("Ollama warm approach failed for %s: %s", hcp.get("hcp_id"), exc)
         return None   # not cached — retried on next warm cycle
 
 
-# ── GPT-4o email-style approach brief (embedded per candidate) ────────────────
+# ── Ollama email-style approach brief (embedded per candidate) ────────────────
 
 _EMAIL_CACHE: Dict[str, Dict] = {}
 _EMAIL_CACHE_FILE = cache_file("approach_email_cache.json")
@@ -234,20 +230,16 @@ def _build_email_prompt(hcp: Dict) -> str:
 
 
 def _call_gpt4o_email(hcp: Dict) -> Optional[Dict]:
-    """One GPT-4o call → {"subject", "email_body", "key_discussion_points"}. Caches on success only."""
+    """One Ollama call → {"subject", "email_body", "key_discussion_points"}. Caches on success only."""
     key = _email_key(hcp)
     cached = _EMAIL_CACHE.get(key)
     if cached:
         return cached
     try:
-        from openai import OpenAI
-        client = OpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            max_retries=settings.OPENAI_MAX_RETRIES,
-            timeout=settings.OPENAI_TIMEOUT,
-        )
+        from app.utils.llm_client import make_llm_client
+        client = make_llm_client()
         resp = client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
+            model=settings.LLM_MODEL,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": _EMAIL_SYSTEM},
@@ -258,7 +250,7 @@ def _call_gpt4o_email(hcp: Dict) -> Optional[Dict]:
         )
         data = json.loads(resp.choices[0].message.content)
         if not data.get("email_body"):
-            raise ValueError("empty email_body in GPT-4o response")
+            raise ValueError("empty email_body in Ollama response")
         result = {
             "email": {
                 "subject":    str(data.get("subject", "")),
@@ -269,7 +261,7 @@ def _call_gpt4o_email(hcp: Dict) -> Optional[Dict]:
         _EMAIL_CACHE[key] = result
         return result
     except Exception as exc:  # noqa: BLE001
-        logger.warning("GPT-4o approach brief failed for %s: %s", hcp.get("hcp_id"), exc)
+        logger.warning("Ollama approach brief failed for %s: %s", hcp.get("hcp_id"), exc)
         return None   # not cached — retried on next warm cycle
 
 
@@ -293,14 +285,14 @@ def attach_approach_briefs(candidates: List[Dict]) -> List[Dict]:
 
 
 def warm_approach_briefs(candidates: List[Dict]) -> int:
-    """Background: GPT-4o email brief for every candidate not cached yet."""
+    """Background: Ollama email brief for every candidate not cached yet."""
     pending = [c for c in candidates if _email_key(c) not in _EMAIL_CACHE]
     if not pending:
         return 0
     with ThreadPoolExecutor(max_workers=_WARM_MAX_WORKERS) as pool:
         list(pool.map(_call_gpt4o_email, pending))
     _save_email_cache()
-    logger.info("Warmed %d GPT-4o approach briefs.", len(pending))
+    logger.info("Warmed %d Ollama approach briefs.", len(pending))
     return len(pending)
 
 
@@ -325,7 +317,7 @@ def count_unwarmed(candidates: List[Dict]) -> int:
 
 
 def warm_approaches(candidates: List[Dict]) -> int:
-    """Background: GPT-4o warm approach for every candidate that has neither a DB
+    """Background: Ollama warm approach for every candidate that has neither a DB
     value nor a cached generation. Parallel; saves to disk every N completions."""
     pending = [
         c for c in candidates
@@ -343,7 +335,7 @@ def warm_approaches(candidates: List[Dict]) -> int:
                 _save_warm_cache()
                 logger.info("Warm approach progress: %d/%d", done, len(pending))
     _save_warm_cache()
-    logger.info("Warmed %d GPT-4o warm approaches.", len(pending))
+    logger.info("Warmed %d Ollama warm approaches.", len(pending))
     return len(pending)
 
 _SYSTEM = (
@@ -397,7 +389,7 @@ def _rule_based_warm_approach(hcp: Dict) -> Tuple[str, Optional[str]]:
     )
 
 
-# ── Direct GPT-4o call (on-demand only) ───────────────────────────────────────
+# ── Direct Ollama call (on-demand only) ───────────────────────────────────────
 
 def _call_gpt4o(hcp: Dict) -> Tuple[str, Optional[str]]:
     cache_key = f"brief_{hcp['hcp_id']}"
@@ -411,19 +403,15 @@ def _call_gpt4o(hcp: Dict) -> Tuple[str, Optional[str]]:
         return brief, highlight
 
     try:
-        from openai import OpenAI
-        client = OpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            max_retries=settings.OPENAI_MAX_RETRIES,
-            timeout=settings.OPENAI_TIMEOUT,
-        )
+        from app.utils.llm_client import make_llm_client
+        client = make_llm_client()
         peer = hcp.get("ai_peer_name") or hcp.get("peer_name")
         peer_str = f"connected via {peer} (existing ZENPEP writer)" if peer else "no current peer connection identified"
         icd = hcp.get("ai_icd10_matched_codes") or hcp.get("matched_icd10_codes", [])
         icd_str = ", ".join(icd) if icd else "none matched"
 
         resp = client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
+            model=settings.LLM_MODEL,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": _SYSTEM},
@@ -445,7 +433,7 @@ def _call_gpt4o(hcp: Dict) -> Tuple[str, Optional[str]]:
         brief     = str(data.get("brief", ""))
         highlight = data.get("highlight")
     except Exception as exc:
-        logger.warning("GPT-4o approach brief failed for %s: %s", hcp.get("hcp_id"), exc)
+        logger.warning("Ollama approach brief failed for %s: %s", hcp.get("hcp_id"), exc)
         brief, highlight = _rule_based_warm_approach(hcp)
 
     _BRIEF_CACHE[cache_key] = {"brief": brief, "highlight": highlight}
@@ -456,7 +444,7 @@ def _call_gpt4o(hcp: Dict) -> Tuple[str, Optional[str]]:
 
 
 def generate_approach_brief(hcp: Dict) -> str:
-    """On-demand: GPT-4o full approach brief."""
+    """On-demand: Ollama full approach brief."""
     brief, _ = _call_gpt4o(hcp)
     return brief
 

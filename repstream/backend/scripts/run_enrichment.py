@@ -133,7 +133,7 @@ def main():
 
     print(f"\nLoaded {len(ALERTS)} alerts into SQLite")
     print(f"LLM_STUB_MODE : {settings.LLM_STUB_MODE}")
-    print(f"OPENAI_MODEL  : {settings.OPENAI_MODEL}")
+    print(f"OLLAMA_MODEL  : {settings.LLM_MODEL}")
     print("=" * 70)
 
     alerts = db.query(AlertRow).order_by(AlertRow.alert_id).all()

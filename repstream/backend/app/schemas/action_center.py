@@ -123,8 +123,8 @@ class AlertItem(BaseModel):
     # ── Identity ──────────────────────────────────────────────────────────────
     alert_id:     str = Field(description="Unique alert identifier", examples=["ALERT-001", "ML-ANOM-A3F2B1C4"])
     alert_type:   str = Field(description="Alert category", examples=["COMPETITIVE", "PAYER", "HCP_DRIFT", "FORMULARY"])
-    title:        str = Field(description="GPT-4o generated alert headline")
-    description:  str = Field(description="GPT-4o generated 2-sentence narrative (what happened, where, when)")
+    title:        str = Field(description="Ollama generated alert headline")
+    description:  str = Field(description="Ollama generated 2-sentence narrative (what happened, where, when)")
     detected_at:  str = Field(description="Detection timestamp shown on card", examples=["Apr 28, 2026 at 8:15 AM"])
     period:       Optional[str] = Field(default=None, description="Data period", examples=["Q1 2026 (Jan - Mar)"])
 
@@ -141,12 +141,12 @@ class AlertItem(BaseModel):
     ai_territory_reach:      Optional[str] = Field(default=None, description="Territories affected as fraction. For PAYER type shows covered lives count instead", examples=["3/12", "340"])
     ai_rx_risk:              Optional[str] = Field(default=None, description="Rx risk level. For PAYER type shown as Access Impact", examples=["High", "Medium", "Low"])
     ai_icd10_codes_affected: List[ICD10Affected] = Field(default=[], description="ICD-10 codes affected — shown as tags under Target ICD-10 section. Empty for PAYER/FORMULARY types")
-    ai_prescribing_drift_note: Optional[str] = Field(default=None, description="GPT-4o: why prescribing behavior changed — shown below ICD-10 tags")
+    ai_prescribing_drift_note: Optional[str] = Field(default=None, description="Ollama: why prescribing behavior changed — shown below ICD-10 tags")
     ai_detection_lead_weeks:   Optional[float] = Field(default=None, description="Weeks ahead of traditional reporting this was detected. Null for PAYER/FORMULARY types", examples=[2.8])
 
     # ── AI Counter Script ─────────────────────────────────────────────────────
-    ai_counter_script:        Optional[str]          = Field(default=None, description="GPT-4o: what rep should say right now — shown in Recommended Counter-Script section")
-    ai_supporting_materials:  List[SupportingMaterial] = Field(default=[], description="GPT-4o: Zenpep materials to deploy — shown below counter script")
+    ai_counter_script:        Optional[str]          = Field(default=None, description="Ollama: what rep should say right now — shown in Recommended Counter-Script section")
+    ai_supporting_materials:  List[SupportingMaterial] = Field(default=[], description="Ollama: Zenpep materials to deploy — shown below counter script")
 
     # ── Payer tier change ─────────────────────────────────────────────────────
     tier_current:  Optional[str] = Field(default=None, description="insight360_payer_access_dul.Formulary_Tier. Only populated for payer alerts sourced from that table; null otherwise")
@@ -316,7 +316,7 @@ class CompetitiveIntelItem(BaseModel):
     activity_change_percent: float = 0.0
     territory_sales: Optional[float] = None
 
-    # ── GPT-4o enrichment ────────────────────────────────────────────────────
+    # ── Ollama enrichment ────────────────────────────────────────────────────
     headline: Optional[str] = None
     executive_summary: Optional[str] = None
     counter_strategy: Optional[str] = None   # DB Counter_Strategy
@@ -368,7 +368,7 @@ class PayerAccessItem(BaseModel):
     ai_nlp_urgency: Optional[str] = None            # Immediate / Standard / Routine
     ai_nlp_keywords: List[str] = []
 
-    # ── GPT-4o ────────────────────────────────────────────────────────────────
+    # ── Ollama ────────────────────────────────────────────────────────────────
     ai_impact_summary: Optional[str] = None         # 1-sentence business impact
     ai_action_plan: Union[str, List[str]] = []       # List[str] when AI-flagged, str when DB fallback
     ai_pa_bridge_note: Optional[str] = None         # PA bridge language (if PA required)

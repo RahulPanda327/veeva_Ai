@@ -27,7 +27,9 @@ def _build_connection_url() -> URL:
 
 engine = create_engine(
     _build_connection_url(),
-    pool_pre_ping=True,
+    pool_pre_ping=True,     # check a pooled connection is alive before handing it out
+    pool_recycle=240,       # drop connections older than 4 min so Synapse's idle
+                            # timeout can't hand us a already-dead one on checkout
     pool_size=5,
     max_overflow=10,
     echo=False,

@@ -1,8 +1,8 @@
 """
-Alert enricher — GPT-4o generates the 5 LANGUAGE keys per alert.
+Alert enricher — Ollama generates the 5 LANGUAGE keys per alert.
 ML owns all numbers. LLM owns all language.
 
-GPT-4o generates:
+Ollama generates:
   1. title                    — specific, data-driven headline
   2. description              — 2-sentence narrative
   3. ai_prescribing_drift_note — why behavior changed
@@ -18,7 +18,7 @@ import json
 import logging
 from typing import Any, Dict
 
-from openai import OpenAI
+from app.utils.llm_client import make_llm_client
 
 from app.config import settings
 
@@ -106,7 +106,7 @@ def enrich(alert, affected_hcps=None) -> dict:
     """
     Returns 5 LLM-generated language fields for the alert, grounded in the
     alert's real data + its actual affected HCP details.
-    Cached per alert_id — GPT-4o called only once per process restart.
+    Cached per alert_id — Ollama called only once per process restart.
     """
     alert_id = alert.alert_id
 
@@ -126,9 +126,9 @@ def enrich(alert, affected_hcps=None) -> dict:
         # Return empty LLM-generated fields so the alert's DB-sourced structure
         # still comes through (_build_alert_item falls back to the DB Alert_Title /
         # Counter_Strategy for the other fields). Deliberately NOT cached, so this
-        # self-heals — the next request retries GPT-4o and fills the values in as
+        # self-heals — the next request retries Ollama and fills the values in as
         # soon as OpenAI is reachable again, with no restart needed.
-        log.warning("GPT-4o alert enrichment unavailable for %s (%s) — empty LLM fields.", alert_id, exc)
+        log.warning("Ollama alert enrichment unavailable for %s (%s) — empty LLM fields.", alert_id, exc)
         return {"ai_prescribing_drift_note": "", "ai_supporting_materials": []}
 
     _CACHE[alert_id] = result
@@ -136,15 +136,11 @@ def enrich(alert, affected_hcps=None) -> dict:
 
 
 def _call_gpt4o(alert, affected_hcps=None) -> dict:
-    client = OpenAI(
-        api_key=settings.OPENAI_API_KEY,
-        max_retries=settings.OPENAI_MAX_RETRIES,
-        timeout=settings.OPENAI_TIMEOUT,
-    )
-    log.info("GPT-4o enriching alert %s", alert.alert_id)
+    client = make_llm_client()
+    log.info("Ollama enriching alert %s", alert.alert_id)
 
     response = client.chat.completions.create(
-        model=settings.OPENAI_MODEL,
+        model=settings.LLM_MODEL,
         messages=[
             {"role": "system", "content": _SYSTEM},
             {"role": "user",   "content": _build_prompt(alert, affected_hcps)},

@@ -35,8 +35,8 @@ class NewWriterCandidate(BaseModel):
     ai_non_writer_flag: bool = True
     ai_warm_approach_text: Optional[str] = None   # short inline text on card
     ai_approach_highlight: Optional[str] = None   # key phrase in green
-    ai_approach_brief: Optional[str] = None       # full GPT-4o brief (on-demand)
-    # GPT-4o email-style brief: {subject, email_body, key_discussion_points}
+    ai_approach_brief: Optional[str] = None       # full Ollama brief (on-demand)
+    # Ollama email-style brief: {subject, email_body, key_discussion_points}
     approach_brief: Optional[Dict[str, Any]] = None
     analysis_badges: List[str] = Field(default_factory=list)
     ai_is_identified: bool = True

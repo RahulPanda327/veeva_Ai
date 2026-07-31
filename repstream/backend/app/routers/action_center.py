@@ -132,7 +132,7 @@ def run_detection(
     Run the full ML pipeline for the rep's territory:
       1. IsolationForest  → detects anomalous Rx HCPs
       2. LinearRegression → detects gradually drifting HCPs
-      3. GPT-4o           → enriches each alert with counter-script + analysis
+      3. Ollama           → enriches each alert with counter-script + analysis
       4. Persists results to insight360_active_alerts_dul
     """
     results = run_pipeline(db, rep.territory_id)
@@ -150,7 +150,7 @@ def enrich_alert_endpoint(
     db: Session = Depends(get_db),
 ):
     """
-    Trigger one GPT-4o call to generate all ai_* fields for a single alert.
+    Trigger one Ollama call to generate all ai_* fields for a single alert.
     Use this when a raw alert row has no ai_* values yet.
     """
     # Alert_Id is the primary key (globally unique) — no territory filter needed.

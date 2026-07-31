@@ -5,7 +5,7 @@ Payer Access service.
   1. AI Impact Scoring         — composite from tier direction, covered lives, PA, channel
   2. ML Predictive Analytics   — project patient abandonment % and count for tier changes
   3. NLP Classification        — keyword-classify Recommended_Action → urgency + category
-  4. GPT-4o                    — generate ai_impact_summary, ai_action_plan, ai_pa_bridge_note
+  4. Ollama                    — generate ai_impact_summary, ai_action_plan, ai_pa_bridge_note
 """
 from __future__ import annotations
 
@@ -20,10 +20,12 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.payer_access import PayerAccess
 from app.schemas.action_center import PayerAccessItem, PayerAccessResponse, priority_counts_from
+from app.utils.db_retry import run_with_retry
+from app.utils.llm_client import normalize_str_list
 
 log = logging.getLogger(__name__)
 
-# ── in-process GPT-4o cache ──────────────────────────────────────────────────
+# ── in-process Ollama cache ──────────────────────────────────────────────────
 _CACHE: Dict[str, Any] = {}
 
 # ── tier → numeric rank (lower number = better access) ───────────────────────
@@ -228,7 +230,7 @@ def _nlp_classify(action_text: Optional[str]) -> Tuple[str, str, List[str]]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Technique 4 — GPT-4o
+# Technique 4 — Ollama
 # ─────────────────────────────────────────────────────────────────────────────
 def _stub_gpt(row: PayerAccess) -> Dict[str, str]:
     direction = _tier_change_direction(row.tier_current, row.tier_previous)
@@ -289,12 +291,8 @@ def _call_gpt4o(row: PayerAccess) -> Dict[str, str]:
         return result
 
     try:
-        from openai import OpenAI
-        client = OpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            max_retries=settings.OPENAI_MAX_RETRIES,
-            timeout=settings.OPENAI_TIMEOUT,
-        )
+        from app.utils.llm_client import make_llm_client, normalize_str_list
+        client = make_llm_client()
         direction = _tier_change_direction(row.tier_current, row.tier_previous)
         prompt = (
             "You are a pharmaceutical market access AI for ZENPEP (pancrelipase). "
@@ -314,18 +312,16 @@ def _call_gpt4o(row: PayerAccess) -> Dict[str, str]:
             "If PA not required, return empty string."
         )
         resp = client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
+            model=settings.LLM_MODEL,
             response_format={"type": "json_object"},
             messages=[{"role": "user", "content": prompt}],
         )
         result = json.loads(resp.choices[0].message.content)
-        # Normalize action_plan to list
-        if isinstance(result.get("ai_action_plan"), str):
-            result["ai_action_plan"] = [s.strip() for s in result["ai_action_plan"].split("\n") if s.strip()]
+        result["ai_action_plan"] = normalize_str_list(result.get("ai_action_plan"))
         _CACHE[cache_key] = result
         return result
     except Exception as exc:
-        log.warning("GPT-4o error for %s: %s", row.plan_id, exc)
+        log.warning("Ollama error for %s: %s", row.plan_id, exc)
         result = _stub_gpt(row)
         _CACHE[cache_key] = result
         return result
@@ -365,7 +361,7 @@ def _build_item(row: PayerAccess) -> PayerAccessItem:
     # Technique 3 — NLP
     nlp_category, nlp_urgency, nlp_keywords = _nlp_classify(row.recommended_action)
 
-    # Technique 4 — GPT-4o (only used when AI-flagged)
+    # Technique 4 — Ollama (only used when AI-flagged)
     gpt = _call_gpt4o(row) if ai_alert else {}
 
     # Build analysis badges
@@ -401,7 +397,9 @@ def _build_item(row: PayerAccess) -> PayerAccessItem:
         ai_nlp_urgency=nlp_urgency,
         ai_nlp_keywords=nlp_keywords,
         ai_impact_summary=gpt.get("ai_impact_summary"),
-        ai_action_plan=gpt.get("ai_action_plan") if ai_alert else (row.recommended_action or ""),
+        # normalize_str_list again at the point of use: the parse-time call only
+        # guards fresh LLM output, and _CACHE / _stub_gpt can supply any shape.
+        ai_action_plan=normalize_str_list(gpt.get("ai_action_plan")) if ai_alert else (row.recommended_action or ""),
         ai_pa_bridge_note=gpt.get("ai_pa_bridge_note") or None,
         view_action_plan=row.recommended_action,   # insight360_payer_access_dul.Recommended_Action
         analysis_badges=badges,
@@ -437,14 +435,17 @@ def get_payer_access(
     # territory_ids (bare Territory_Durable_Ids) filters on the table's own
     # Territory_Durable_Id column; None = all (the unfiltered default).
     filtered = bool(territory_ids)
-    rows = []
-    try:
+
+    def _fetch():
         q = db.query(PayerAccess)
         if filtered:
             q = q.filter(PayerAccess.territory_id.in_(territory_ids))
-        rows = q.all()
-    except Exception as e:
-        log.warning("Payer access DB query failed (%s), using sample data", e)
+        return q.all()
+
+    # A dropped connection is retried, not swallowed. Falling back to _SAMPLE_PA_ROWS
+    # on a DB error would return 200 with fabricated payer plans, which the permanent
+    # response cache then stores and serves as real data — worse than failing.
+    rows = run_with_retry(db, _fetch, what="Payer access query")
 
     # Sample fallback only for the unfiltered default — a filtered selection with
     # no matching plans is a valid empty result.
