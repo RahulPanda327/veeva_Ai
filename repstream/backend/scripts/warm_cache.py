@@ -50,7 +50,7 @@ log = logging.getLogger("warm_cache")
 from sqlalchemy import distinct, select
 
 from app.database import SessionLocal
-from app.models.territory_prioritization import TerritoryHierarchy
+from app.models.territory_models import TerritoryHierarchy
 from app.routers.territory_prioritization import _get_ranked_hcps
 from app.routers.new_writer_id import _get_candidates
 from app.services.territory_prioritization.llm_insight import warm_insights, count_uncached_insights

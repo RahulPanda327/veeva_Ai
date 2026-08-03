@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 def _get_all_territory_ids(db) -> list[str]:
     from sqlalchemy import select, distinct
-    from app.models.territory_prioritization import TerritoryHierarchy
+    from app.models.territory_models import TerritoryHierarchy
     rows = db.execute(select(distinct(TerritoryHierarchy.territory_id))).scalars().all()
     return list(rows)
 

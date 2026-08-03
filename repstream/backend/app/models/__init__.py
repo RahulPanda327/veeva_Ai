@@ -1,4 +1,4 @@
-from app.models.territory_prioritization import (
+from app.models.territory_models import (
     HealthcarePractitioner,
     PrescriberSales,
     CallActivity,

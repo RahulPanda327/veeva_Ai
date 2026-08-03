@@ -1,5 +1,5 @@
 from app.schemas.hcp import HCPBase, HCPResponse
-from app.schemas.territory_prioritization import (
+from app.schemas.territory_schemas import (
     TerritorySummary,
     HCPRankedItem,
     HCPInsightResponse,

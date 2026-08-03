@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.schemas.territory_prioritization import HCPInsightResponse, HCPRankedItem, TerritorySummary
+from app.schemas.territory_schemas import HCPInsightResponse, HCPRankedItem, TerritorySummary
 from app.services.filters_service import (
     FilterSelection,
     filter_params,
@@ -33,6 +33,11 @@ from app.services.territory_prioritization.llm_insight import (
     generate_insights_for_list,
     regenerate_single_hcp_insight,
     warm_insights,
+)
+from app.services.territory_prioritization.score_reason import (
+    count_uncached_reasons,
+    generate_score_reasons_for_list,
+    warm_score_reasons,
 )
 from app.services.territory_prioritization.weekly_target import build_territory_summary
 from app.utils.auth import RepIdentity, get_current_rep
@@ -61,12 +66,13 @@ _ranked_mem_lock = threading.Lock()
 
 
 def _maybe_warm_insights_async(territory_id: str, ranked: List[dict]) -> None:
-    """Fire-and-forget: generate real GPT-4o insights for any HCPs still on the
-    template, in a daemon thread. Next page load serves them from cache."""
+    """Fire-and-forget: generate real GPT-4o insights AND ai_score_reason text for
+    any HCPs still on the template, in a daemon thread. Next page load serves them
+    from cache. The two have separate caches, so either one alone justifies a run."""
     with _warm_lock:
         if territory_id in _warming_territories:
             return
-        if count_uncached_insights(ranked) == 0:
+        if count_uncached_insights(ranked) == 0 and count_uncached_reasons(ranked) == 0:
             return
         _warming_territories.add(territory_id)
 
@@ -75,6 +81,10 @@ def _maybe_warm_insights_async(territory_id: str, ranked: List[dict]) -> None:
             warm_insights(ranked)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Insight warmer failed for %s: %s", territory_id, exc)
+        try:
+            warm_score_reasons(ranked)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Score reason warmer failed for %s: %s", territory_id, exc)
         finally:
             with _warm_lock:
                 _warming_territories.discard(territory_id)
@@ -172,9 +182,11 @@ def _get_ranked_hcps(db: Session, territory_id: str, ref_date: date) -> List[dic
         with _ranked_mem_lock:
             cached = _ranked_mem.get(cache_key)
     if cached:
-        # Re-attach insights so any GPT-4o text produced by the background warmer
-        # since this list was cached is picked up (cache stores template-only).
+        # Re-attach insights and score reasons so any GPT-4o text produced by the
+        # background warmer since this list was cached is picked up (cache stores
+        # template-only).
         generate_insights_for_list(cached)
+        generate_score_reasons_for_list(cached)
         _maybe_warm_insights_async(territory_id, cached)
         return cached
 
@@ -249,9 +261,11 @@ def _get_ranked_hcps(db: Session, territory_id: str, ref_date: date) -> List[dic
     # Enrich with all 4 AI/ML techniques (scores + prediction + NLP + badges)
     ranked = enrich_all_hcps(features, call_stats_map)
 
-    # Attach insights READ-ONLY (cached real GPT-4o text, else instant template),
-    # then kick off background generation for any HCP still on the template.
+    # Attach insights + ai_score_reason READ-ONLY (cached real GPT-4o text, else
+    # instant template), then kick off background generation for anything still
+    # on the template.
     generate_insights_for_list(ranked)
+    generate_score_reasons_for_list(ranked)
     _maybe_warm_insights_async(territory_id, ranked)
 
     # Add period metadata

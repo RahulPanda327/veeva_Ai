@@ -69,7 +69,7 @@ from sqlalchemy.orm import Session
 log = logging.getLogger(__name__)
 
 from app.models.active_alerts import ActiveAlert
-from app.models.territory_prioritization import HealthcarePractitioner
+from app.models.territory_models import HealthcarePractitioner
 from app.services.action_center.alert_enricher import enrich
 from app.services.action_center.alert_detector import DetectedAlert, detect_alerts
 from app.services.territory_prioritization.data_ingestion import get_current_and_prior_quarter

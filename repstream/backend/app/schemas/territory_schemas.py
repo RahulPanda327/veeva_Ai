@@ -49,6 +49,7 @@ class HCPRankedItem(BaseModel):
     last_call_date: Optional[str] = None          # HCP dim view Modified_Date
     ai_priority_tier: Literal["HIGH", "MEDIUM", "LOW"] = "LOW"
     ai_score: str = "0.00%"                       # composite score behind the tier, e.g. "65.86%"
+    ai_score_reason: str = ""                     # LLM explanation of why ai_score came out this way
     ai_generated_insight: Optional[str] = None
 
 
