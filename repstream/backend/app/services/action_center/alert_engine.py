@@ -689,6 +689,49 @@ def _affected_hcps_by_alert(db: Session) -> Dict[str, List[dict]]:
         return {}
 
 
+def _hcp_detection_dates(db: Session, territory_ids: Optional[List[str]] = None) -> List[datetime]:
+    """Detection datetime for every AFFECTED HCP, not every alert.
+
+    insight360_active_alerts_details_dul is the alert→HCP bridge; an HCP's
+    detection date is the Detection_Datetime of the alert it appears under, so an
+    alert covering 12 HCPs contributes 12 dates. Feeds ai_early_detection_weeks.
+
+    The bridge is read with raw SQL (only Alert_Id, already proven in
+    _affected_hcps_by_alert); the timestamps come from the ActiveAlert ORM so the
+    Detection_Datetime column mapping stays in one place. Unparseable values are
+    dropped and logged rather than silently counted as datetime.min.
+    """
+    try:
+        bridge = db.execute(text("""
+            SELECT b.Alert_Id AS alert_id
+            FROM hub_insight360.insight360_active_alerts_details_dul b
+        """)).mappings().all()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("HCP detection-date bridge lookup failed (%s).", exc)
+        return []
+
+    q = db.query(ActiveAlert.alert_id, ActiveAlert.detected_at)
+    if territory_ids:
+        q = q.filter(ActiveAlert.territory_id.in_(territory_ids))
+    date_by_alert = {a_id: dt for a_id, dt in q.all()}
+
+    dates: List[datetime] = []
+    unparseable = 0
+    for row in bridge:
+        raw = date_by_alert.get(row["alert_id"])   # None = alert outside the filter
+        if not raw:
+            continue
+        parsed = _parse_detected_at(raw)
+        if parsed == datetime.min:
+            unparseable += 1
+            continue
+        dates.append(parsed)
+    if unparseable:
+        log.warning("ai_early_detection_weeks: %d HCP detection dates did not match "
+                    "any known format and were skipped.", unparseable)
+    return dates
+
+
 def _deploy_reps_by_alert(db: Session) -> Dict[str, List[dict]]:
     """Alert_Id → field reps to deploy the alert to, with their affected HCPs.
 
@@ -1059,18 +1102,40 @@ def get_alert_summary(
     unread         = len(facts)
     now_str        = datetime.now(timezone.utc).strftime("%b %d, %Y %I:%M %p")
 
-    # ai_early_detection_weeks — the span the alerts cover: take all (filter-scoped)
-    # alert dates, and compute whole weeks between the earliest and latest —
-    # (max - min) days // 7. 0 if fewer than two parseable dates.
-    detected_dates = [
-        d for d in (_parse_detected_at(dt) for (_, _, _, dt) in facts)
+    # ai_early_detection_weeks — the detection span across the AFFECTED HCPs: take
+    # the detection date of every HCP in the alert→HCP bridge (filter-scoped) and
+    # express (max - min) as weeks — (max - min) / 7.
+    # The span is measured in FRACTIONAL days (total_seconds, not .days) and the
+    # result is rounded to 1 dp, so a sub-week range still reports a decimal
+    # instead of flooring to 0 — the tile is a float ("2.8 weeks"), not an int.
+    # Falls back to the alert-level dates when the bridge is empty/unavailable, so
+    # the tile still reflects something rather than dropping to 0 on a query error.
+    detected_dates = _hcp_detection_dates(db, territory_ids)
+    if not detected_dates:
+        detected_dates = [
+            d for d in (_parse_detected_at(dt) for (_, _, _, dt) in facts)
+            if d != datetime.min
+        ]
+
+    # Payer alerts live in payer_access, NOT in insight360_active_alerts_dul, so
+    # the ActiveAlert query above cannot see them. The Active Alerts screen DOES
+    # show them (as the "Payer" group, carrying change_date in detected_at), so
+    # without this the tile silently ignores every payer alert on screen and the
+    # span starts at the oldest AI alert instead of the oldest visible one.
+    # Same helper and same territory scope get_alerts uses, so both agree.
+    detected_dates += [
+        d for d in (
+            _parse_detected_at(p.detected_at)
+            for p in _payer_alerts_from_db(db, territory_ids) if p.detected_at
+        )
         if d != datetime.min
     ]
+
     if detected_dates:
-        span_days = (max(detected_dates) - min(detected_dates)).days
-        early_detection = max(0, span_days // 7)
+        span_days = (max(detected_dates) - min(detected_dates)).total_seconds() / 86400
+        early_detection = round(max(0.0, span_days) / 7, 1)
     else:
-        early_detection = 0
+        early_detection = 0.0
 
     # Active Alerts counts ARE the ai_*_count fields below. module_counts (filled
     # by the router) carries only the other 3 modules — no duplication.
