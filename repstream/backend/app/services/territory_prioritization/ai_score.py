@@ -245,6 +245,10 @@ def enrich_hcp_with_ai_scores(hcp: Dict, call_stats: Dict) -> Dict:
     )
     hcp.update(scores)
     hcp["ai_priority_tier"]    = assign_ai_priority_tier(scores["ai_priority_score"])
+    # ai_score is the composite value the tier is derived from — exposed on each HCP
+    # so the UI can show WHY it landed in HIGH / MEDIUM / LOW. Formatted as a "65.86%"
+    # string for display; the numeric ai_priority_score is what sorting still uses.
+    hcp["ai_score"]            = f"{scores['ai_priority_score']:.2f}%"
     hcp["ai_interaction_impact"] = round(interaction, 2)
     hcp["call_count_90d"]      = call_stats.get("call_count_90d", 0)
     hcp["days_since_last_call"] = call_stats.get("days_since_last_call")
