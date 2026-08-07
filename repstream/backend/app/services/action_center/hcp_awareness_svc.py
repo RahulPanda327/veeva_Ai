@@ -43,6 +43,7 @@ from openai import OpenAI
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.utils.llm_json import as_text, parse_llm_json
 from app.models.hcp_awareness import HCPAwareness
 from app.schemas.action_center import (
     HCPAwarenessItem,
@@ -306,13 +307,14 @@ Generate the 2 fields as JSON."""
 
 def _call_gpt4o(row, latest_score, slope, risk_score, nlp_category, predicted_4w) -> dict:
     client = OpenAI(
-        api_key=settings.OPENAI_API_KEY,
-        max_retries=settings.OPENAI_MAX_RETRIES,
-        timeout=settings.OPENAI_TIMEOUT,
+        api_key=settings.LLM_API_KEY,
+        base_url=settings.LLM_BASE_URL or None,
+        max_retries=settings.LLM_MAX_RETRIES,
+        timeout=settings.LLM_TIMEOUT,
     )
-    log.info("GPT-4o enriching HCP %s", row.hcp_id)
+    log.info("%s/%s enriching HCP %s", settings.LLM_PROVIDER, settings.LLM_MODEL, row.hcp_id)
     response = client.chat.completions.create(
-        model=settings.OPENAI_MODEL,
+        model=settings.LLM_MODEL,
         messages=[
             {"role": "system", "content": _SYSTEM},
             {"role": "user",   "content": _build_prompt(row, latest_score, slope, risk_score, nlp_category, predicted_4w or latest_score)},
@@ -320,7 +322,7 @@ def _call_gpt4o(row, latest_score, slope, risk_score, nlp_category, predicted_4w
         response_format={"type": "json_object"},
         temperature=0.2,
     )
-    return json.loads(response.choices[0].message.content)
+    return parse_llm_json(response.choices[0].message.content)
 
 
 def _stub(row: HCPAwareness, nlp_category: str, predicted_direction: Optional[str]) -> dict:
@@ -345,7 +347,8 @@ def _enrich(row, latest_score, slope, risk_score, nlp_category, predicted_direct
         try:
             result = _call_gpt4o(row, latest_score, slope, risk_score, nlp_category, predicted_4w)
         except Exception as exc:
-            log.warning("GPT-4o failed for HCP %s (%s) — falling back to stub", row.hcp_id, exc)
+            log.warning("%s/%s failed for HCP %s (%s) — falling back to stub",
+                        settings.LLM_PROVIDER, settings.LLM_MODEL, row.hcp_id, exc)
             result = _stub(row, nlp_category, predicted_direction)
     _CACHE[row.hcp_id] = result
     return result
@@ -501,7 +504,7 @@ def get_hcp_awareness(
                 ai_change_from_period       = _PERIODS[0][0],
                 analysis_badges             = ["NLP_ANALYSIS", "AI_SCORING", "PREDICTIVE_ANALYTICS"],
                 ai_icd10_prescribing_patterns = [],
-                ai_aim_xr_activity          = ai.get("ai_aim_xr_activity"),
+                ai_aim_xr_activity          = as_text(ai.get("ai_aim_xr_activity")),
             ),
         })
 

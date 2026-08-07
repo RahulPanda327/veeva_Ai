@@ -168,7 +168,14 @@ def warm_response_cache(base_url: str) -> None:
         return
 
     log.info("Warming response cache via live server at %s ...", base_url)
-    with httpx.Client(base_url=base_url, timeout=120) as client:
+    # No timeout: warming is a background job with nothing waiting on it, and the
+    # LLM-enriched endpoints legitimately run for minutes on a cold cache — a local
+    # model is slower than a hosted one, and every alert/HCP needs its own call.
+    # A deadline here doesn't cancel that work (the server keeps going and still
+    # fills the cache), it only makes the client stop listening and log a
+    # misleading "failed (timed out)". Waiting is correct; the server's own
+    # LLM_TIMEOUT / LLM_MAX_RETRIES remain the real per-call limits.
+    with httpx.Client(base_url=base_url, timeout=None) as client:
         # 1) Unfiltered baseline FIRST — restores the ~3-min 'app ready' timing.
         for path in _RESPONSE_CACHE_ENDPOINTS:
             try:

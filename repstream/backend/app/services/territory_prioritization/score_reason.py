@@ -22,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
 
 from app.config import settings
+from app.utils.llm_json import as_text, parse_llm_json
 from app.services.territory_prioritization.ai_score import WEIGHTS
 from app.utils.cache_paths import cache_file
 
@@ -210,12 +211,13 @@ def _call_gpt4o(hcp: Dict) -> str:
     try:
         from openai import OpenAI
         client = OpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            max_retries=settings.OPENAI_MAX_RETRIES,
-            timeout=settings.OPENAI_TIMEOUT,
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL or None,
+            max_retries=settings.LLM_MAX_RETRIES,
+            timeout=settings.LLM_TIMEOUT,
         )
         resp = client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
+            model=settings.LLM_MODEL,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": _SYSTEM},
@@ -224,11 +226,12 @@ def _call_gpt4o(hcp: Dict) -> str:
             max_tokens=120,
             temperature=0.2,
         )
-        reason = str(json.loads(resp.choices[0].message.content).get("reason", "")).strip()
+        reason = (as_text(parse_llm_json(resp.choices[0].message.content).get("reason"), "") or "").strip()
         if not reason:
             raise ValueError("empty reason in LLM response")
     except Exception as exc:  # noqa: BLE001
-        logger.warning("GPT-4o score reason failed for %s: %s", hcp["hcp_id"], exc)
+        logger.warning("%s/%s score reason failed for %s: %s",
+                       settings.LLM_PROVIDER, settings.LLM_MODEL, hcp["hcp_id"], exc)
         reason = _rule_based_reason(hcp)
 
     _REASON_CACHE[cache_key] = reason
@@ -276,7 +279,7 @@ def warm_score_reasons(hcps: List[Dict]) -> int:
                 _save_reason_cache()
                 logger.info("Score reason warm progress: %d/%d", done, len(pending))
     _save_reason_cache()
-    logger.info("Warmed %d GPT-4o score reasons.", len(pending))
+    logger.info("Warmed %d %s/%s score reasons.", len(pending), settings.LLM_PROVIDER, settings.LLM_MODEL)
     return len(pending)
 
 

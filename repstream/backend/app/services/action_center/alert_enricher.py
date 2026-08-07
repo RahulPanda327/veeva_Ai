@@ -14,13 +14,13 @@ dimension table in alert_engine.py (_icd10_for_alert).
 """
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any, Dict
 
 from openai import OpenAI
 
 from app.config import settings
+from app.utils.llm_json import parse_llm_json
 
 log = logging.getLogger(__name__)
 
@@ -128,7 +128,8 @@ def enrich(alert, affected_hcps=None) -> dict:
         # Counter_Strategy for the other fields). Deliberately NOT cached, so this
         # self-heals — the next request retries GPT-4o and fills the values in as
         # soon as OpenAI is reachable again, with no restart needed.
-        log.warning("GPT-4o alert enrichment unavailable for %s (%s) — empty LLM fields.", alert_id, exc)
+        log.warning("LLM alert enrichment unavailable for %s via %s/%s (%s) — empty LLM fields.",
+                    alert_id, settings.LLM_PROVIDER, settings.LLM_MODEL, exc)
         return {"ai_prescribing_drift_note": "", "ai_supporting_materials": []}
 
     _CACHE[alert_id] = result
@@ -137,14 +138,15 @@ def enrich(alert, affected_hcps=None) -> dict:
 
 def _call_gpt4o(alert, affected_hcps=None) -> dict:
     client = OpenAI(
-        api_key=settings.OPENAI_API_KEY,
-        max_retries=settings.OPENAI_MAX_RETRIES,
-        timeout=settings.OPENAI_TIMEOUT,
+        api_key=settings.LLM_API_KEY,
+        base_url=settings.LLM_BASE_URL or None,
+        max_retries=settings.LLM_MAX_RETRIES,
+        timeout=settings.LLM_TIMEOUT,
     )
-    log.info("GPT-4o enriching alert %s", alert.alert_id)
+    log.info("%s/%s enriching alert %s", settings.LLM_PROVIDER, settings.LLM_MODEL, alert.alert_id)
 
     response = client.chat.completions.create(
-        model=settings.OPENAI_MODEL,
+        model=settings.LLM_MODEL,
         messages=[
             {"role": "system", "content": _SYSTEM},
             {"role": "user",   "content": _build_prompt(alert, affected_hcps)},
@@ -152,7 +154,7 @@ def _call_gpt4o(alert, affected_hcps=None) -> dict:
         response_format={"type": "json_object"},
         temperature=0.3,
     )
-    return json.loads(response.choices[0].message.content)
+    return parse_llm_json(response.choices[0].message.content)
 
 
 def _stub(alert) -> dict:

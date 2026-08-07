@@ -32,7 +32,11 @@ _client: Optional[OpenAI] = None
 def _get_client() -> OpenAI:
     global _client
     if _client is None:
-        _client = OpenAI(api_key=settings.OPENAI_API_KEY, timeout=settings.OPENAI_TIMEOUT)
+        _client = OpenAI(
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL or None,
+            timeout=settings.LLM_TIMEOUT,
+        )
     return _client
 
 
@@ -64,10 +68,10 @@ def call_llm(
     client = _get_client()
     last_exc: Optional[Exception] = None
 
-    for attempt in range(1, settings.OPENAI_MAX_RETRIES + 1):
+    for attempt in range(1, settings.LLM_MAX_RETRIES + 1):
         try:
             response = client.chat.completions.create(
-                model=settings.OPENAI_MODEL,
+                model=settings.LLM_MODEL,
                 messages=[
                     {"role": "system", "content": system_message},
                     {"role": "user", "content": prompt},
@@ -81,16 +85,16 @@ def call_llm(
 
         except openai.RateLimitError as exc:
             wait = 2 ** attempt
-            logger.warning("OpenAI rate limit hit (attempt %d/%d). Retrying in %ds.", attempt, settings.OPENAI_MAX_RETRIES, wait)
+            logger.warning("OpenAI rate limit hit (attempt %d/%d). Retrying in %ds.", attempt, settings.LLM_MAX_RETRIES, wait)
             time.sleep(wait)
             last_exc = exc
 
         except openai.APITimeoutError as exc:
-            logger.warning("OpenAI timeout (attempt %d/%d).", attempt, settings.OPENAI_MAX_RETRIES)
+            logger.warning("OpenAI timeout (attempt %d/%d).", attempt, settings.LLM_MAX_RETRIES)
             last_exc = exc
 
         except openai.OpenAIError as exc:
             logger.error("OpenAI error: %s", exc)
             raise
 
-    raise RuntimeError(f"LLM call failed after {settings.OPENAI_MAX_RETRIES} retries: {last_exc}") from last_exc
+    raise RuntimeError(f"LLM call failed after {settings.LLM_MAX_RETRIES} retries: {last_exc}") from last_exc

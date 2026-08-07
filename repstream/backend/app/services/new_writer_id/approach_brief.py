@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from app.config import settings
+from app.utils.llm_json import as_str_list, as_text, parse_llm_json
 from app.utils.cache_paths import cache_file
 
 logger = logging.getLogger(__name__)
@@ -110,12 +111,13 @@ def _call_gpt4o_warm(hcp: Dict) -> Optional[Dict]:
     try:
         from openai import OpenAI
         client = OpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            max_retries=settings.OPENAI_MAX_RETRIES,
-            timeout=settings.OPENAI_TIMEOUT,
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL or None,
+            max_retries=settings.LLM_MAX_RETRIES,
+            timeout=settings.LLM_TIMEOUT,
         )
         resp = client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
+            model=settings.LLM_MODEL,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": _WARM_SYSTEM},
@@ -124,7 +126,7 @@ def _call_gpt4o_warm(hcp: Dict) -> Optional[Dict]:
             max_tokens=120,
             temperature=0.3,
         )
-        data = json.loads(resp.choices[0].message.content)
+        data = parse_llm_json(resp.choices[0].message.content)
         text = str(data.get("warm_approach", ""))
         if not text:
             raise ValueError("empty warm_approach in GPT-4o response")
@@ -132,7 +134,8 @@ def _call_gpt4o_warm(hcp: Dict) -> Optional[Dict]:
         _WARM_CACHE[key] = result
         return result
     except Exception as exc:  # noqa: BLE001
-        logger.warning("GPT-4o warm approach failed for %s: %s", hcp.get("hcp_id"), exc)
+        logger.warning("%s/%s warm approach failed for %s: %s",
+                       settings.LLM_PROVIDER, settings.LLM_MODEL, hcp.get("hcp_id"), exc)
         return None   # not cached — retried on next warm cycle
 
 
@@ -242,12 +245,13 @@ def _call_gpt4o_email(hcp: Dict) -> Optional[Dict]:
     try:
         from openai import OpenAI
         client = OpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            max_retries=settings.OPENAI_MAX_RETRIES,
-            timeout=settings.OPENAI_TIMEOUT,
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL or None,
+            max_retries=settings.LLM_MAX_RETRIES,
+            timeout=settings.LLM_TIMEOUT,
         )
         resp = client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
+            model=settings.LLM_MODEL,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": _EMAIL_SYSTEM},
@@ -256,7 +260,7 @@ def _call_gpt4o_email(hcp: Dict) -> Optional[Dict]:
             max_tokens=500,
             temperature=0.4,
         )
-        data = json.loads(resp.choices[0].message.content)
+        data = parse_llm_json(resp.choices[0].message.content)
         if not data.get("email_body"):
             raise ValueError("empty email_body in GPT-4o response")
         result = {
@@ -264,12 +268,13 @@ def _call_gpt4o_email(hcp: Dict) -> Optional[Dict]:
                 "subject":    str(data.get("subject", "")),
                 "email_body": str(data.get("email_body", "")),
             },
-            "key_discussion_points": data.get("key_discussion_points") or [],
+            "key_discussion_points": as_str_list(data.get("key_discussion_points")),
         }
         _EMAIL_CACHE[key] = result
         return result
     except Exception as exc:  # noqa: BLE001
-        logger.warning("GPT-4o approach brief failed for %s: %s", hcp.get("hcp_id"), exc)
+        logger.warning("%s/%s approach brief failed for %s: %s",
+                       settings.LLM_PROVIDER, settings.LLM_MODEL, hcp.get("hcp_id"), exc)
         return None   # not cached — retried on next warm cycle
 
 
@@ -300,7 +305,7 @@ def warm_approach_briefs(candidates: List[Dict]) -> int:
     with ThreadPoolExecutor(max_workers=_WARM_MAX_WORKERS) as pool:
         list(pool.map(_call_gpt4o_email, pending))
     _save_email_cache()
-    logger.info("Warmed %d GPT-4o approach briefs.", len(pending))
+    logger.info("Warmed %d %s/%s approach briefs.", len(pending), settings.LLM_PROVIDER, settings.LLM_MODEL)
     return len(pending)
 
 
@@ -343,7 +348,7 @@ def warm_approaches(candidates: List[Dict]) -> int:
                 _save_warm_cache()
                 logger.info("Warm approach progress: %d/%d", done, len(pending))
     _save_warm_cache()
-    logger.info("Warmed %d GPT-4o warm approaches.", len(pending))
+    logger.info("Warmed %d %s/%s warm approaches.", len(pending), settings.LLM_PROVIDER, settings.LLM_MODEL)
     return len(pending)
 
 _SYSTEM = (
@@ -413,9 +418,10 @@ def _call_gpt4o(hcp: Dict) -> Tuple[str, Optional[str]]:
     try:
         from openai import OpenAI
         client = OpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            max_retries=settings.OPENAI_MAX_RETRIES,
-            timeout=settings.OPENAI_TIMEOUT,
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL or None,
+            max_retries=settings.LLM_MAX_RETRIES,
+            timeout=settings.LLM_TIMEOUT,
         )
         peer = hcp.get("ai_peer_name") or hcp.get("peer_name")
         peer_str = f"connected via {peer} (existing ZENPEP writer)" if peer else "no current peer connection identified"
@@ -423,7 +429,7 @@ def _call_gpt4o(hcp: Dict) -> Tuple[str, Optional[str]]:
         icd_str = ", ".join(icd) if icd else "none matched"
 
         resp = client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
+            model=settings.LLM_MODEL,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": _SYSTEM},
@@ -441,11 +447,12 @@ def _call_gpt4o(hcp: Dict) -> Tuple[str, Optional[str]]:
             max_tokens=150,
             temperature=0.4,
         )
-        data = json.loads(resp.choices[0].message.content)
-        brief     = str(data.get("brief", ""))
-        highlight = data.get("highlight")
+        data = parse_llm_json(resp.choices[0].message.content)
+        brief     = as_text(data.get("brief"), "")
+        highlight = as_text(data.get("highlight"))
     except Exception as exc:
-        logger.warning("GPT-4o approach brief failed for %s: %s", hcp.get("hcp_id"), exc)
+        logger.warning("%s/%s approach brief failed for %s: %s",
+                       settings.LLM_PROVIDER, settings.LLM_MODEL, hcp.get("hcp_id"), exc)
         brief, highlight = _rule_based_warm_approach(hcp)
 
     _BRIEF_CACHE[cache_key] = {"brief": brief, "highlight": highlight}

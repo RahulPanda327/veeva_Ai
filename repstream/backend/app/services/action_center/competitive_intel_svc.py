@@ -9,7 +9,6 @@ Competitive Intel service.
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
@@ -17,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.utils.llm_json import as_str_list, as_text, parse_llm_json
 from app.models.competitive_intel import CompetitiveIntel
 from app.schemas.action_center import (
     CompetitiveIntelItem,
@@ -237,9 +237,10 @@ def _call_gpt4o(row: CompetitiveIntel) -> Dict[str, str]:
     try:
         from openai import OpenAI
         client = OpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            max_retries=settings.OPENAI_MAX_RETRIES,
-            timeout=settings.OPENAI_TIMEOUT,
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL or None,
+            max_retries=settings.LLM_MAX_RETRIES,
+            timeout=settings.LLM_TIMEOUT,
         )
         prompt = (
             "You are a pharmaceutical sales intelligence AI for ZENPEP (pancrelipase). "
@@ -260,18 +261,18 @@ def _call_gpt4o(row: CompetitiveIntel) -> Dict[str, str]:
             "why_it_matters: 1 sentence on why this matters for ZENPEP (can be empty string)."
         )
         resp = client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
+            model=settings.LLM_MODEL,
             response_format={"type": "json_object"},
             messages=[{"role": "user", "content": prompt}],
         )
-        result = json.loads(resp.choices[0].message.content)
+        result = parse_llm_json(resp.choices[0].message.content)
         for key in ("recommended_actions", "field_force_talking_points"):
             if isinstance(result.get(key), str):
                 result[key] = [s.strip() for s in result[key].split("\n") if s.strip()]
         _CACHE[cache_key] = result
         return result
     except Exception as exc:
-        log.warning("GPT-4o error for %s: %s", row.intel_id, exc)
+        log.warning("%s/%s error for %s: %s", settings.LLM_PROVIDER, settings.LLM_MODEL, row.intel_id, exc)
         result = _stub_gpt(row)
         _CACHE[cache_key] = result
         return result
@@ -317,14 +318,14 @@ def _build_item(row: CompetitiveIntel) -> CompetitiveIntelItem:
         rx_change_percent=share_change,
         activity_change_percent=freq_change,
         territory_sales=_parse_sales(getattr(row, "territory_sales", None)),
-        headline=gpt.get("headline"),
-        executive_summary=gpt.get("executive_summary"),
+        headline=as_text(gpt.get("headline")),
+        executive_summary=as_text(gpt.get("executive_summary")),
         counter_strategy=row.counter_strategy,
         risk_level=risk_level,
         urgency_level=urgency_level,
-        business_impact=gpt.get("business_impact"),
-        recommended_actions=gpt.get("recommended_actions") or [],
-        field_force_talking_points=gpt.get("field_force_talking_points") or [],
+        business_impact=as_text(gpt.get("business_impact")),
+        recommended_actions=as_str_list(gpt.get("recommended_actions")),
+        field_force_talking_points=as_str_list(gpt.get("field_force_talking_points")),
     )
 
 

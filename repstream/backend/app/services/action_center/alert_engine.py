@@ -69,6 +69,7 @@ from sqlalchemy.orm import Session
 log = logging.getLogger(__name__)
 
 from app.models.active_alerts import ActiveAlert
+from app.utils.llm_json import as_text
 from app.models.territory_models import HealthcarePractitioner
 from app.services.action_center.alert_enricher import enrich
 from app.services.action_center.alert_detector import DetectedAlert, detect_alerts
@@ -504,8 +505,8 @@ def _build_ml_alert_item(ml: DetectedAlert, ai: dict) -> AlertItem:
     return AlertItem(
         alert_id                  = ml.alert_id,
         alert_type                = ml.alert_type,
-        title                     = ai.get("title") or f"{ml.detection_method} — {ml.ai_affected_hcp_count} HCPs affected",
-        description               = ai.get("description") or "",
+        title                     = as_text(ai.get("title")) or f"{ml.detection_method} — {ml.ai_affected_hcp_count} HCPs affected",
+        description               = as_text(ai.get("description")) or "",
         detected_at               = ml.detected_at,
         period                    = "",
         ai_severity               = ml.severity,
@@ -514,9 +515,9 @@ def _build_ml_alert_item(ml: DetectedAlert, ai: dict) -> AlertItem:
         ai_territory_reach        = ml.ai_territory_reach,
         ai_rx_risk                = ml.ai_rx_risk,
         ai_icd10_codes_affected   = [ICD10Affected(**i) for i in ml.ai_icd10_codes_affected],
-        ai_prescribing_drift_note = ai.get("ai_prescribing_drift_note"),
+        ai_prescribing_drift_note = as_text(ai.get("ai_prescribing_drift_note")),
         ai_detection_lead_weeks   = ml.ai_detection_lead_weeks,
-        ai_counter_script         = ai.get("ai_counter_script"),
+        ai_counter_script         = as_text(ai.get("ai_counter_script")),
         ai_supporting_materials   = [SupportingMaterial(**m) for m in ai.get("ai_supporting_materials", [])],
         is_acknowledged           = False,
         is_dismissed              = False,
@@ -542,10 +543,10 @@ def _build_alert_item(
     alert_type       = _classify_alert_type(row.title or "", raw_method)
 
     # STEP 3 — language from GPT-4o
-    title         = ai.get("title") or row.title or ""
-    description   = ai.get("description") or row.territory_name or ""
-    drift_note    = ai.get("ai_prescribing_drift_note")
-    counter_script= ai.get("ai_counter_script") or row.ai_counter_script
+    title         = as_text(ai.get("title")) or row.title or ""
+    description   = as_text(ai.get("description")) or row.territory_name or ""
+    drift_note    = as_text(ai.get("ai_prescribing_drift_note"))
+    counter_script= as_text(ai.get("ai_counter_script")) or row.ai_counter_script
     materials     = [SupportingMaterial(**m) for m in ai.get("ai_supporting_materials", [])]
 
     return AlertItem(

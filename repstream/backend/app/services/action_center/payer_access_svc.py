@@ -9,7 +9,6 @@ Payer Access service.
 """
 from __future__ import annotations
 
-import json
 import logging
 import math
 import re
@@ -18,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.utils.llm_json import as_str_list, as_text, parse_llm_json
 from app.models.payer_access import PayerAccess
 from app.schemas.action_center import PayerAccessItem, PayerAccessResponse, priority_counts_from
 
@@ -291,9 +291,10 @@ def _call_gpt4o(row: PayerAccess) -> Dict[str, str]:
     try:
         from openai import OpenAI
         client = OpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            max_retries=settings.OPENAI_MAX_RETRIES,
-            timeout=settings.OPENAI_TIMEOUT,
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL or None,
+            max_retries=settings.LLM_MAX_RETRIES,
+            timeout=settings.LLM_TIMEOUT,
         )
         direction = _tier_change_direction(row.tier_current, row.tier_previous)
         prompt = (
@@ -314,18 +315,18 @@ def _call_gpt4o(row: PayerAccess) -> Dict[str, str]:
             "If PA not required, return empty string."
         )
         resp = client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
+            model=settings.LLM_MODEL,
             response_format={"type": "json_object"},
             messages=[{"role": "user", "content": prompt}],
         )
-        result = json.loads(resp.choices[0].message.content)
+        result = parse_llm_json(resp.choices[0].message.content)
         # Normalize action_plan to list
         if isinstance(result.get("ai_action_plan"), str):
             result["ai_action_plan"] = [s.strip() for s in result["ai_action_plan"].split("\n") if s.strip()]
         _CACHE[cache_key] = result
         return result
     except Exception as exc:
-        log.warning("GPT-4o error for %s: %s", row.plan_id, exc)
+        log.warning("%s/%s error for %s: %s", settings.LLM_PROVIDER, settings.LLM_MODEL, row.plan_id, exc)
         result = _stub_gpt(row)
         _CACHE[cache_key] = result
         return result
@@ -400,9 +401,12 @@ def _build_item(row: PayerAccess) -> PayerAccessItem:
         ai_nlp_action_category=nlp_category,
         ai_nlp_urgency=nlp_urgency,
         ai_nlp_keywords=nlp_keywords,
-        ai_impact_summary=gpt.get("ai_impact_summary"),
-        ai_action_plan=gpt.get("ai_action_plan") if ai_alert else (row.recommended_action or ""),
-        ai_pa_bridge_note=gpt.get("ai_pa_bridge_note") or None,
+        ai_impact_summary=as_text(gpt.get("ai_impact_summary")),
+        # ai_action_plan is Union[str, List[str]] — a list is valid here, so only
+        # its elements need coercing, not the field itself.
+        ai_action_plan=(as_str_list(gpt.get("ai_action_plan")) if ai_alert
+                        else (row.recommended_action or "")),
+        ai_pa_bridge_note=as_text(gpt.get("ai_pa_bridge_note")),
         view_action_plan=row.recommended_action,   # insight360_payer_access_dul.Recommended_Action
         analysis_badges=badges,
         ai_is_flagged=ai_alert,

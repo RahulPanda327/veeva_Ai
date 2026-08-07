@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.config import settings
+from app.utils.llm_json import as_text, parse_llm_json
 from app.utils.cache_paths import cache_file
 
 logger = logging.getLogger(__name__)
@@ -178,12 +179,13 @@ def _call_gpt4o(hcp: Dict) -> Tuple[str, Optional[str]]:
     try:
         from openai import OpenAI
         client = OpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            max_retries=settings.OPENAI_MAX_RETRIES,
-            timeout=settings.OPENAI_TIMEOUT,
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL or None,
+            max_retries=settings.LLM_MAX_RETRIES,
+            timeout=settings.LLM_TIMEOUT,
         )
         resp = client.chat.completions.create(
-            model=settings.OPENAI_MODEL,
+            model=settings.LLM_MODEL,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": _SYSTEM},
@@ -192,11 +194,12 @@ def _call_gpt4o(hcp: Dict) -> Tuple[str, Optional[str]]:
             max_tokens=220,
             temperature=0.3,
         )
-        data = json.loads(resp.choices[0].message.content)
-        insight   = str(data.get("insight", ""))
-        highlight = data.get("highlight")
+        data = parse_llm_json(resp.choices[0].message.content)
+        insight   = as_text(data.get("insight"), "")
+        highlight = as_text(data.get("highlight"))
     except Exception as exc:
-        logger.warning("GPT-4o insight failed for %s: %s", hcp["hcp_id"], exc)
+        logger.warning("%s/%s insight failed for %s: %s",
+                       settings.LLM_PROVIDER, settings.LLM_MODEL, hcp["hcp_id"], exc)
         insight, highlight = _rule_based_insight(hcp)
 
     _INSIGHT_CACHE[cache_key] = {"insight": insight, "highlight": highlight}
@@ -269,7 +272,7 @@ def warm_insights(hcps: List[Dict]) -> int:
                 _save_insight_cache()   # survive a mid-warm restart
                 logger.info("Insight warm progress: %d/%d", done, len(pending))
     _save_insight_cache()
-    logger.info("Warmed %d GPT-4o insights.", len(pending))
+    logger.info("Warmed %d %s/%s insights.", len(pending), settings.LLM_PROVIDER, settings.LLM_MODEL)
     return len(pending)
 
 
