@@ -6,7 +6,7 @@ candidates, objections, alerts) plus the reference context files describing what
 the fields mean.
 
 Request and response follow the Datastream chatbot's envelope
-(Ai_assistant/api/models.py), so an existing client can point at this endpoint
+(ai_assistant/api/models.py), so an existing client can point at this endpoint
 without changing how it builds or reads a message.
 """
 import logging

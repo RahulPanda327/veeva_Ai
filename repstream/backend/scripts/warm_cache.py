@@ -209,13 +209,13 @@ def warm_response_cache(base_url: str) -> None:
 
 def refresh_assistant_kb(skip_embedding: bool = False,
                          base_url: str = "http://localhost:8000") -> None:
-    """Push the freshly warmed data into the Ai_assistant chatbot's knowledge base.
+    """Push the freshly warmed data into the ai_assistant chatbot's knowledge base.
 
     Two steps, both as subprocesses so neither can take down a warm-up run that
     has already succeeded:
 
       1. export_live_to_kb.py — reads the response cache this run just populated
-         and rewrites Ai_assistant/kb/repstream_live_data.txt.
+         and rewrites ai_assistant/kb/repstream_live_data.txt.
       2. ingest_to_pgvector — re-embeds the kb folder, so the assistant answers
          from the new numbers rather than the previous snapshot.
 
@@ -226,7 +226,7 @@ def refresh_assistant_kb(skip_embedding: bool = False,
     import subprocess   # noqa: PLC0415
 
     backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    assistant_dir = os.path.join(backend_dir, "Ai_assistant")
+    assistant_dir = os.path.join(backend_dir, "ai_assistant")
 
     log.info("Refreshing the assistant knowledge base ...")
     try:
@@ -252,7 +252,7 @@ def refresh_assistant_kb(skip_embedding: bool = False,
         return
 
     if not os.path.isdir(assistant_dir):
-        log.warning("  Ai_assistant not found at %s - skipping embedding.", assistant_dir)
+        log.warning("  ai_assistant not found at %s - skipping embedding.", assistant_dir)
         return
 
     # Run the ingest with the CHATBOT's interpreter, not whichever one launched
@@ -287,7 +287,7 @@ def refresh_assistant_kb(skip_embedding: bool = False,
 def main():
     parser = argparse.ArgumentParser(description="Pre-warm all AI caches, and the response cache, before business hours.")
     parser.add_argument("--skip-assistant-kb", action="store_true",
-                        help="Do not refresh/re-embed the Ai_assistant knowledge base afterwards.")
+                        help="Do not refresh/re-embed the ai_assistant knowledge base afterwards.")
     parser.add_argument("--skip-embedding", action="store_true",
                         help="Rewrite the assistant's kb file but skip the pgvector embedding step.")
     parser.add_argument("--territory-id", default=None, help="Warm only this territory instead of every territory.")

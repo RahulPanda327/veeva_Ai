@@ -1,12 +1,22 @@
 """RepStream configuration — loaded from environment variables."""
 from functools import lru_cache
+from pathlib import Path
 from typing import List
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# One .env for the whole project, at the repstream root — shared with the
+# ai_assistant chatbot. Resolved as an absolute path rather than the bare ".env",
+# which pydantic reads relative to the CURRENT WORKING DIRECTORY: that silently
+# picked up a different file (or none) depending on where the process was
+# started from.
+#   this file: repstream/backend/app/config.py
+# parents[0]=app, parents[1]=backend, parents[2]=repstream.
+_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=str(_ENV_FILE), env_file_encoding="utf-8", extra="ignore")
 
     # Database — Azure Synapse Analytics (SQL Server)
     DB_HOST: str = "ds-hub-syn-wks.sql.azuresynapse.net"

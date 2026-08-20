@@ -1,0 +1,96 @@
+# RepStream — the single dependency file for the whole project.
+#
+# Covers BOTH applications, which share one virtualenv (repstream/venv):
+#   backend/                the RepStream API
+#   backend/ai_assistant/   the Datastream chatbot
+#
+# They previously had separate requirements files whose pins conflicted on every
+# shared package — the backend pinned each one just below the chatbot's floor
+# (fastapi 0.115.5 vs >=0.115.6, pydantic 2.10.3 vs >=2.11, scikit-learn 1.5.2
+# vs >=1.8, pyodbc 5.2.0 vs >=5.3, openai 1.57.4 vs >=1.58.1). No single
+# environment could satisfy both, which is why there were two venvs.
+#
+# Resolved by taking the higher floor in every case: the chatbot's minimums are
+# newer, and nothing in the backend needs an older release. Shared packages are
+# therefore >= rather than ==, so one install serves both.
+#
+#   python -m venv venv
+#   venv\Scripts\activate
+#   pip install -r requirements.txt
+
+# ── Web framework (both) ──────────────────────────────────────────────────────
+fastapi>=0.115.6
+uvicorn[standard]>=0.32.1
+python-multipart>=0.0.20
+# Imported directly by app/utils/masking.py and the chatbot's request-logging
+# middleware (BaseHTTPMiddleware). It arrives with fastapi today, but anything
+# imported directly belongs here — otherwise a future fastapi release that
+# vendors or drops it breaks us silently.
+starlette>=0.40.0
+
+# ── Config / validation (both) ────────────────────────────────────────────────
+pydantic>=2.11.0
+pydantic-settings>=2.7.0
+python-dotenv>=1.0.1
+
+# ── Auth (both) ───────────────────────────────────────────────────────────────
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# ── Database ──────────────────────────────────────────────────────────────────
+sqlalchemy>=2.0.36          # backend: Azure Synapse ORM
+pyodbc>=5.3.0               # backend: SQL Server driver
+alembic>=1.14.0             # backend: migrations
+psycopg2-binary>=2.9.10     # chatbot: pgvector store
+
+# ── LLM providers ─────────────────────────────────────────────────────────────
+openai>=1.58.1
+anthropic>=0.40.0
+groq>=0.13.0
+tiktoken>=0.8.0
+ollama>=0.6.2
+
+# ── LangChain / LangGraph ─────────────────────────────────────────────────────
+langchain-core>=0.3
+langchain-community>=0.2.16
+langchain-ollama>=1.1.0
+langchain-openai>=1.4.0
+langchain-groq>=1.1.0
+langgraph>=0.2.14
+langgraph-checkpoint-sqlite>=2.0.0
+
+# ── ML / NLP ──────────────────────────────────────────────────────────────────
+scikit-learn>=1.8.0
+numpy>=2.0.0
+pandas>=2.0.0
+# Imported directly by scripts/generate_stub_models.py to persist the .pkl
+# models; comes with scikit-learn, but declared because we import it ourselves.
+joblib>=1.3.0
+sentence-transformers>=3.3.1   # chatbot: embeddings (all-MiniLM-L6-v2)
+# Imported directly by the chatbot's local_kb_matcher. Installed as a
+# sentence-transformers dependency, declared for the same reason as joblib.
+# This is the single largest package in the project (~2.5 GB on Windows).
+torch>=2.0.0
+matplotlib>=3.10.9             # chatbot: chart generation
+# spaCy is referenced only in a docstring, never imported. Pinned >=3.8 because
+# 3.7.x has no cp312 wheel for its blis dependency and fails to build on Windows.
+spacy>=3.8.0
+
+# ── Vector / cache / queue ────────────────────────────────────────────────────
+pinecone>=5.4.2
+redis>=5.2.1
+celery>=5.4.0
+kombu>=5.4.2
+cachetools>=5.5.0
+
+# ── HTTP ──────────────────────────────────────────────────────────────────────
+httpx>=0.28.1
+
+# ── Files ─────────────────────────────────────────────────────────────────────
+openpyxl>=3.1.0             # chatbot: Chatbot_SQL_Mapping.xlsx
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest>=8.3.4
+pytest-asyncio>=0.24.0
+pytest-mock>=3.14.0
+factory-boy>=3.3.1

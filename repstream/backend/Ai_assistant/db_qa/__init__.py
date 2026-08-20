@@ -1,25 +1,20 @@
 """
-db_qa — Scenario 4 (Database Q&A) toolkit.
+db_qa — vector store and charting helpers.
 
-Self-contained subsystem that translates natural-language questions into
-read-only T-SQL against the Ops warehouse, executes via the shared SQL Server
-client, and optionally renders a chart from the result set.
+Was the Scenario 4 (Database Q&A) toolkit: natural language -> read-only T-SQL
+-> execute -> chart. That SQL path has been removed; RepStream answers from
+embedded text and never generates SQL.
 
-Modules:
-  sql_templates      — DB_TEMPLATES list (~19 parameterised template dicts)
-  sql_query_router   — SQLQueryRouter, TemplateMatch, SCHEMA_CONTEXT
+What remains:
+  pgvector_store     — PGVectorStore, the embedding store RepStream retrieves from
   chart_generator    — ChartGenerator + detect_chart heuristic
+  local_kb_matcher   — local KB similarity matching
+
+Nothing is imported eagerly here. pgvector_store pulls in sentence-transformers
+and torch, so importing it costs seconds and hundreds of MB — callers should
+import the module they actually need:
+
+    from db_qa.pgvector_store import get_pgvector_store
 """
 
-from db_qa.sql_query_router import SQLQueryRouter, TemplateMatch, SCHEMA_CONTEXT
-from db_qa.sql_templates import DB_TEMPLATES
-from db_qa.chart_generator import ChartGenerator, detect_chart
-
-__all__ = [
-    "SQLQueryRouter",
-    "TemplateMatch",
-    "SCHEMA_CONTEXT",
-    "DB_TEMPLATES",
-    "ChartGenerator",
-    "detect_chart",
-]
+__all__: list[str] = []

@@ -132,7 +132,8 @@ from fastapi.responses import JSONResponse
 # from fastapi.staticfiles import StaticFiles
 
 from api.routes import auth, chat, documents, model_switch, sessions
-from api.routes.database import router as db_router, charts_router
+# api/routes/database.py held the Database Q&A and chart endpoints for the SQL
+# scenarios. Removed with them.
 from api.routes.export import router as export_router
 from api.routes.feedback import router as feedback_router
 from api.routes.application_logs_route import router as app_logs_router
@@ -217,8 +218,6 @@ app.include_router(chat.router)           # /chat  (now also returns `reply` fie
 app.include_router(sessions.router)
 app.include_router(documents.router)
 app.include_router(model_switch.router)
-app.include_router(db_router)
-app.include_router(charts_router)
 app.include_router(export_router)
 app.include_router(feedback_router)
 app.include_router(app_logs_router)       # /logs — interaction lifecycle + auth events

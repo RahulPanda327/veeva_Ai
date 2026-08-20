@@ -4,7 +4,7 @@ The pipeline this reads from:
 
     warm-up  ->  cache/endpoint_response_cache.json
              ->  scripts/export_live_to_kb.py   (renders it as sentences)
-             ->  Ai_assistant/kb/repstream_live_data.txt
+             ->  ai_assistant/kb/repstream_live_data.txt
              ->  scripts.ingest_to_pgvector     (embeds it)
              ->  pgvector
 
@@ -33,8 +33,8 @@ log = logging.getLogger(__name__)
 # The chatbot lives inside backend/ and owns the vector store; both run on the
 # same virtualenv, so importing it is a path insert rather than a dependency.
 #   this file: backend/app/services/assistant/chat_svc.py
-# parents[3] is backend/, which contains Ai_assistant.
-_ASSISTANT_DIR = str(Path(__file__).resolve().parents[3] / "Ai_assistant")
+# parents[3] is backend/, which contains ai_assistant.
+_ASSISTANT_DIR = str(Path(__file__).resolve().parents[3] / "ai_assistant")
 
 _SYSTEM = """You are the RepStream assistant for a pharmaceutical sales rep.
 

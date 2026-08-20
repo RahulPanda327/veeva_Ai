@@ -1,0 +1,572 @@
+[
+  {
+    "greeting_id": "GREET_001",
+    "category": "welcome",
+    "triggers": [
+      "hi",
+      "hello",
+      "hey",
+      "hii",
+      "helo",
+      "heyy",
+      "hai",
+      "hiya",
+      "howdy",
+      "sup",
+      "what's up",
+      "whats up",
+      "yo"
+    ],
+    "responses": [
+      "Hello, {user_name}! \ud83d\udc4b Welcome to the Hub Data Assistant. How can I help you today?",
+      "Hi {user_name}! Great to see you. What data would you like to check today?",
+      "Hey {user_name}! I'm your Hub Data Assistant. Ask me anything about file loads, schedules, or feed status.",
+      "Hello {user_name}! Ready to help. You can ask me about failed files, QC issues, feed details, and more.",
+      "Hi there, {user_name}! What can I look up for you today?"
+    ],
+    "show_examples": true,
+    "example_prompts": [
+      "Which files failed today?",
+      "Show me Walgreens feed status",
+      "Any QC triggered in last 3 days?"
+    ],
+    "priority": 1
+  },
+  {
+    "greeting_id": "GREET_002",
+    "category": "good_morning",
+    "triggers": [
+      "good morning",
+      "gm",
+      "morning",
+      "gud morning",
+      "good mrng",
+      "mornin"
+    ],
+    "responses": [
+      "Good morning, {user_name}! \u2600\ufe0f Hope your day is off to a great start. What can I check for you?",
+      "Morning, {user_name}! Ready to help you with today's data operations. What do you need?",
+      "Good morning, {user_name}! Let's get your day started \u2014 ask me about today's scheduled files or any failures.",
+      "A very good morning to you, {user_name}! What would you like to check first today?",
+      "Good morning! Nice to see you, {user_name}. How can I assist with your data today?"
+    ],
+    "show_examples": true,
+    "example_prompts": [
+      "Which files are scheduled to load today?",
+      "Is there any missed file today?",
+      "Which files failed today?"
+    ],
+    "priority": 1
+  },
+  {
+    "greeting_id": "GREET_003",
+    "category": "good_afternoon",
+    "triggers": [
+      "good afternoon",
+      "afternoon",
+      "good aftn",
+      "gud afternoon"
+    ],
+    "responses": [
+      "Good afternoon, {user_name}! Hope your day is going well. What can I help you with?",
+      "Afternoon, {user_name}! I'm here and ready. What data do you need?",
+      "Good afternoon! Great to have you here, {user_name}. What would you like to check?",
+      "Hello {user_name}, good afternoon! What file or feed info can I pull up for you?",
+      "Good afternoon, {user_name}! What can I look into for you right now?"
+    ],
+    "show_examples": true,
+    "example_prompts": [
+      "Which files loaded in the last 24 hours?",
+      "What is the DDS count of Walgreens file loaded today?",
+      "Which files are delayed today?"
+    ],
+    "priority": 1
+  },
+  {
+    "greeting_id": "GREET_004",
+    "category": "good_evening",
+    "triggers": [
+      "good evening",
+      "evening",
+      "gud evening",
+      "good evng"
+    ],
+    "responses": [
+      "Good evening, {user_name}! Still on the data watch? I'm here to help.",
+      "Evening, {user_name}! What can I check for you tonight?",
+      "Good evening! Hope you had a productive day, {user_name}. What do you need?",
+      "Hello {user_name}, good evening! Any late-day loads or issues I can help you look into?",
+      "Good evening, {user_name}! I'm ready to help \u2014 what data do you need?"
+    ],
+    "show_examples": true,
+    "example_prompts": [
+      "Which files loaded yesterday?",
+      "Any QC triggered in last 3 days?",
+      "Which files are delayed today?"
+    ],
+    "priority": 1
+  },
+  {
+    "greeting_id": "GREET_005",
+    "category": "good_night",
+    "triggers": [
+      "good night",
+      "gn",
+      "goodnight",
+      "gud night",
+      "nite",
+      "night"
+    ],
+    "responses": [
+      "Good night, {user_name}! \ud83c\udf19 Hope everything ran smoothly today. See you tomorrow!",
+      "Good night, {user_name}! Rest well \u2014 I'll be here whenever you need me.",
+      "Night, {user_name}! Don't forget to check yesterday's loads in the morning. Take care!",
+      "Good night, {user_name}! Great working with you today. See you on the next shift!",
+      "Good night! Take care, {user_name}. I'll be ready when you return. \ud83d\ude0a"
+    ],
+    "show_examples": false,
+    "example_prompts": [],
+    "priority": 1
+  },
+  {
+    "greeting_id": "GREET_006",
+    "category": "how_are_you",
+    "triggers": [
+      "how are you",
+      "how r u",
+      "how are u",
+      "hows it going",
+      "how's it going",
+      "how do you do",
+      "you okay",
+      "you good",
+      "you alright"
+    ],
+    "responses": [
+      "I'm doing great, {user_name}, thank you for asking! Ready to help with any data queries. \ud83d\ude0a",
+      "All systems running smoothly here, {user_name}! What can I assist you with?",
+      "Doing well and ready to help, {user_name}! What would you like to check?",
+      "I'm great, {user_name}! Always happy to pull up some data for you. What do you need?",
+      "Couldn't be better, {user_name}! I'm here and ready. What's on your mind?"
+    ],
+    "show_examples": true,
+    "example_prompts": [
+      "Which files failed today?",
+      "Show me today's schedule",
+      "Which subject areas have active feeds?"
+    ],
+    "priority": 2
+  },
+  {
+    "greeting_id": "GREET_007",
+    "category": "welcome_back",
+    "triggers": [
+      "i'm back",
+      "im back",
+      "i am back",
+      "back again",
+      "here again",
+      "hello again",
+      "hi again",
+      "hey again"
+    ],
+    "responses": [
+      "Welcome back, {user_name}! \ud83d\udc4b Glad you're here again. What do you need?",
+      "Hey {user_name}, great to see you again! What can I look up for you?",
+      "Welcome back! I've been waiting, {user_name}. What data do you need today?",
+      "Hello again, {user_name}! Ready to pick up where we left off. What's next?",
+      "Good to have you back, {user_name}! What would you like to check?"
+    ],
+    "show_examples": true,
+    "example_prompts": [
+      "Show last 7 days load history for copay",
+      "Which files failed today?",
+      "Any QC triggered in last 3 days?"
+    ],
+    "priority": 1
+  },
+  {
+    "greeting_id": "GREET_008",
+    "category": "thanks",
+    "triggers": [
+      "thanks",
+      "thank you",
+      "thank u",
+      "thankyou",
+      "thnks",
+      "thnx",
+      "thx",
+      "ty",
+      "much appreciated",
+      "appreciate it",
+      "cheers"
+    ],
+    "responses": [
+      "You're welcome, {user_name}! \ud83d\ude0a Let me know if there's anything else I can help with.",
+      "Happy to help, {user_name}! What else can I look up for you?",
+      "Anytime, {user_name}! Feel free to ask if you need more data.",
+      "My pleasure, {user_name}! Is there anything else you'd like to check?",
+      "Glad I could help, {user_name}! Don't hesitate to ask more questions."
+    ],
+    "show_examples": false,
+    "example_prompts": [],
+    "priority": 2
+  },
+  {
+    "greeting_id": "GREET_009",
+    "category": "great_response",
+    "triggers": [
+      "great",
+      "perfect",
+      "excellent",
+      "awesome",
+      "amazing",
+      "nice",
+      "good",
+      "cool",
+      "brilliant",
+      "fantastic",
+      "superb",
+      "well done",
+      "good job",
+      "nice one"
+    ],
+    "responses": [
+      "Glad that worked for you, {user_name}! Anything else I can help with?",
+      "Thank you, {user_name}! What else would you like to explore?",
+      "Happy to be of service, {user_name}! Is there more data you need?",
+      "Great to hear, {user_name}! What would you like to check next?",
+      "Glad it helped, {user_name}! Let me know if you need anything more."
+    ],
+    "show_examples": false,
+    "example_prompts": [],
+    "priority": 2
+  },
+  {
+    "greeting_id": "GREET_010",
+    "category": "goodbye",
+    "triggers": [
+      "bye",
+      "goodbye",
+      "see you",
+      "see ya",
+      "later",
+      "cya",
+      "take care",
+      "have a good day",
+      "have a nice day",
+      "talk later",
+      "gtg",
+      "gotta go",
+      "ttyl",
+      "i'm done",
+      "im done",
+      "that's all",
+      "thats all",
+      "nothing else",
+      "all done",
+      "exit",
+      "close",
+      "done"
+    ],
+    "responses": [
+      "Goodbye, {user_name}! Have a great day and come back anytime. \ud83d\udc4b",
+      "See you later, {user_name}! I'll be here whenever you need data help.",
+      "Take care, {user_name}! Hope everything runs smoothly. Bye! \ud83d\ude0a",
+      "Bye {user_name}! It was great helping you. See you next time!",
+      "Goodbye, {user_name}! Don't hesitate to come back if you need anything."
+    ],
+    "show_examples": false,
+    "example_prompts": [],
+    "priority": 1
+  },
+  {
+    "greeting_id": "GREET_011",
+    "category": "help",
+    "triggers": [
+      "help",
+      "i need help",
+      "can you help",
+      "what can you do",
+      "how does this work",
+      "what can i ask",
+      "show me options",
+      "guide me",
+      "tell me what you do",
+      "capabilities",
+      "features",
+      "menu"
+    ],
+    "responses": [
+      "Sure, {user_name}! Here's what I can help you with:\n\ud83d\udcc5 Schedules \u2014 today, tomorrow, yesterday\n\u26a0\ufe0f Issues \u2014 failed, missed, delayed files\n\ud83d\udd0d Feed lookup \u2014 copay, walgreens, copilot, integrichain\n\ud83d\udcca History \u2014 last 7 days, accredo loads\n\u2705 QC \u2014 quality check failures\n\nJust ask in plain English!",
+      "Happy to help, {user_name}! You can ask me things like:\n\u2022 'Which files failed today?'\n\u2022 'Show Walgreens feed status'\n\u2022 'Any QC issues in the last 3 days?'\n\u2022 'What loaded yesterday?'\n\nWhat would you like to check?",
+      "Here's what I can do, {user_name}:\n\u2714 Check file load schedules\n\u2714 Find failed, missed, or delayed jobs\n\u2714 Look up feeds by vendor name\n\u2714 Show load history\n\u2714 Report QC failures\n\nWhat do you need?",
+      "I'm your Hub Data Assistant, {user_name}! Ask me about file loads, feed status, QC issues, or schedules. Try: 'Which files are scheduled today?'",
+      "Of course, {user_name}! I can pull data on file schedules, load statuses, QC failures, and vendor feeds. Just ask me a question in plain English."
+    ],
+    "show_examples": true,
+    "example_prompts": [
+      "Which files failed today?",
+      "Show me today's schedule",
+      "Any QC triggered in last 3 days?"
+    ],
+    "priority": 1
+  },
+  {
+    "greeting_id": "GREET_012",
+    "category": "not_understand",
+    "triggers": [
+      "i don't understand",
+      "i dont understand",
+      "i do not understand",
+      "not understand",
+      "didn't get it",
+      "didnt get it",
+      "don't get it",
+      "dont get it",
+      "confused",
+      "i'm confused",
+      "im confused",
+      "what do you mean",
+      "unclear",
+      "i have no idea",
+      "no idea",
+      "huh",
+      "what",
+      "say that again",
+      "come again",
+      "pardon",
+      "can you repeat",
+      "repeat that",
+      "say again",
+      "once more",
+      "type once more",
+      "can you rephrase",
+      "rephrase",
+      "explain again"
+    ],
+    "responses": [
+      "No worries, {user_name}! \ud83d\ude0a Let me make it simple. Try asking:\n\u2022 'Which files failed today?'\n\u2022 'Show Walgreens feed status'\n\u2022 'What loaded yesterday?'\nWhat would you like to know?",
+      "That's okay, {user_name}! Here are some things I can help with:\n\ud83d\udcc5 'Which files load today?'\n\u26a0\ufe0f 'Any missed files today?'\n\ud83d\udcca 'Show copay load history'\nWhich one sounds useful?",
+      "No problem, {user_name}! Just type your question like:\n\u2022 'What failed today?'\n\u2022 'Show me QC issues'\n\u2022 'Which feeds are active?'\nI'll take it from there!",
+      "Don't worry, {user_name}! I understand plain questions. For example:\n\ud83d\udc49 'Which files are delayed today?'\n\ud83d\udc49 'Show Walgreens data'\n\ud83d\udc49 'Any QC errors recently?'\nGive one of those a try!",
+      "Let me help you, {user_name}! You can simply ask:\n\u2022 Schedules: 'What loads today?'\n\u2022 Failures: 'What failed today?'\n\u2022 Vendors: 'Show copay status'\nWhat would you like to check?"
+    ],
+    "show_examples": true,
+    "example_prompts": [
+      "Which files failed today?",
+      "Show me today's schedule",
+      "Any QC triggered in last 3 days?"
+    ],
+    "priority": 1
+  },
+  {
+    "greeting_id": "GREET_013",
+    "category": "low_confidence_fallback",
+    "triggers": [],
+    "trigger_condition": "confidence_below_threshold",
+    "confidence_threshold": 0.55,
+    "responses": [
+      "I'm not quite sure I understood that, {user_name}. Could you rephrase? Try: 'Which files failed today?' or 'Show me today's schedule'.",
+      "Hmm, I didn't catch that, {user_name}. Can you try asking differently? Example: 'What loaded yesterday?' or 'Show Walgreens feed'.",
+      "I'm not sure what you mean, {user_name}. Try asking like: 'Any missed files today?' or 'Show copay load history'.",
+      "Sorry, {user_name}, I couldn't understand that. Can you rephrase? For example: 'Which files are delayed?' or 'Show QC failures'.",
+      "I didn't quite get that, {user_name}. Could you type it differently? Try: 'What files load today?' or 'Any QC issues recently?'"
+    ],
+    "show_examples": true,
+    "example_prompts": [
+      "Which files failed today?",
+      "Show me today's schedule",
+      "Any QC triggered in last 3 days?"
+    ],
+    "priority": 1
+  },
+  {
+    "greeting_id": "GREET_014",
+    "category": "out_of_scope",
+    "triggers": [],
+    "trigger_condition": "no_intent_match",
+    "responses": [
+      "Sorry, {user_name}, that's outside what I can help with. I'm built for Hub data operations. Try: 'Which files failed today?' or 'Show Walgreens feed status'.",
+      "I can't help with that, {user_name}, but I can help with file loads, QC issues, and feed status. What data do you need?",
+      "That's not something I cover, {user_name}. I specialize in Hub data operations \u2014 schedules, failures, feed lookups, and QC. Give one of those a try!",
+      "Outside my scope, {user_name}! But ask me about: 'Missed files today', 'Copay load status', or 'Active feeds'. I'm good at those!",
+      "I'm not able to help with that, {user_name}. My expertise is Hub data \u2014 file loads, QC, vendor feeds. What data question can I answer?"
+    ],
+    "show_examples": true,
+    "example_prompts": [
+      "Which files failed today?",
+      "Show me today's schedule",
+      "Any QC triggered in last 3 days?"
+    ],
+    "priority": 1
+  },
+  {
+    "greeting_id": "GREET_015",
+    "category": "positive_feedback",
+    "triggers": [
+      "you're great",
+      "you are great",
+      "you're the best",
+      "you are the best",
+      "you're amazing",
+      "you are amazing",
+      "love this",
+      "love it",
+      "this is helpful",
+      "very helpful",
+      "so helpful",
+      "this is great",
+      "this is awesome"
+    ],
+    "responses": [
+      "Thank you so much, {user_name}! \ud83d\ude0a That means a lot. What else can I help you with?",
+      "You're too kind, {user_name}! I'm always here when you need data help.",
+      "Glad to hear that, {user_name}! I'm here to make your work easier. What's next?",
+      "Thank you, {user_name}! That's why I'm here. What else would you like to check?",
+      "Appreciate the kind words, {user_name}! Ready for your next question whenever you are."
+    ],
+    "show_examples": false,
+    "example_prompts": [],
+    "priority": 2
+  },
+  {
+    "greeting_id": "GREET_016",
+    "category": "negative_feedback",
+    "triggers": [
+      "this is wrong",
+      "wrong answer",
+      "that's wrong",
+      "thats wrong",
+      "incorrect",
+      "not right",
+      "you're wrong",
+      "you are wrong",
+      "bad answer",
+      "that's not what i asked",
+      "thats not what i asked",
+      "not helpful",
+      "not what i need"
+    ],
+    "responses": [
+      "I'm sorry about that, {user_name}! Can you rephrase your question? I'll try again. Example: 'Which files failed today?'",
+      "Apologies, {user_name}! Let me try again \u2014 could you tell me more specifically what you're looking for?",
+      "Sorry about the confusion, {user_name}! Please try rephrasing. For example: 'Show copay load status today' or 'What loaded yesterday?'",
+      "I apologize, {user_name}! Let me know exactly what data you need and I'll do my best to pull it correctly.",
+      "Sorry, {user_name}! I want to get it right for you. Could you type your question a bit differently? I'll give it another go."
+    ],
+    "show_examples": true,
+    "example_prompts": [
+      "Which files failed today?",
+      "Show me today's schedule",
+      "Any QC triggered in last 3 days?"
+    ],
+    "priority": 1
+  },
+  {
+    "greeting_id": "GREET_017",
+    "category": "who_are_you",
+    "triggers": [
+      "who are you",
+      "what are you",
+      "what is this",
+      "what is this bot",
+      "are you a bot",
+      "are you ai",
+      "are you human",
+      "tell me about yourself",
+      "introduce yourself"
+    ],
+    "responses": [
+      "Hi {user_name}! I'm the Hub Data Assistant \ud83e\udd16 \u2014 built to help you check file loads, feed status, QC issues, and schedules. Just ask me in plain English!",
+      "I'm your Hub Data Assistant, {user_name}! I connect to Hub's metadata to answer questions about file loads, failed jobs, QC failures, and vendor feeds.",
+      "Great question, {user_name}! I'm an AI chatbot built for Hub data operations. I can check schedules, find failures, look up vendor feeds, and report QC issues.",
+      "I'm the Hub Data Assistant, {user_name}! Think of me as your data ops helper \u2014 I can answer questions about file loads, feed status, and quality checks.",
+      "Hello {user_name}! I'm an AI assistant built for Hub data operations. I help teams quickly check file schedules, load statuses, and QC results without writing SQL."
+    ],
+    "show_examples": true,
+    "example_prompts": [
+      "Which files failed today?",
+      "Show me today's schedule",
+      "Which subject areas have active feeds?"
+    ],
+    "priority": 1
+  },
+  {
+    "greeting_id": "GREET_018",
+    "category": "confirmation",
+    "triggers": [
+      "okay",
+      "ok",
+      "got it",
+      "understood",
+      "alright",
+      "sounds good",
+      "makes sense",
+      "sure",
+      "yep",
+      "yes",
+      "yeah",
+      "yup",
+      "roger",
+      "copy"
+    ],
+    "responses": [
+      "Great, {user_name}! Let me know what you'd like to check next.",
+      "Perfect, {user_name}! What's your next question?",
+      "Got it, {user_name}! What else can I help you with?",
+      "Understood, {user_name}! What would you like to look up?",
+      "Sounds good, {user_name}! Ready for your next query."
+    ],
+    "show_examples": false,
+    "example_prompts": [],
+    "priority": 3
+  },
+  {
+    "greeting_id": "GREET_019",
+    "category": "try_again",
+    "triggers": [
+      "try again",
+      "retry",
+      "try once more",
+      "one more time",
+      "again",
+      "redo",
+      "do it again",
+      "run again"
+    ],
+    "responses": [
+      "Sure, {user_name}! Go ahead and ask your question again \u2014 I'm listening.",
+      "Of course, {user_name}! Type your question again and I'll do my best.",
+      "No problem, {user_name}! Please go ahead \u2014 ask me again.",
+      "Ready, {user_name}! What would you like to ask?",
+      "Absolutely, {user_name}! Ask away \u2014 I'm here."
+    ],
+    "show_examples": false,
+    "example_prompts": [],
+    "priority": 2
+  },
+  {
+    "greeting_id": "GREET_020",
+    "category": "waiting_response",
+    "triggers": [
+      "wait",
+      "hold on",
+      "one moment",
+      "one sec",
+      "just a moment",
+      "brb",
+      "give me a sec"
+    ],
+    "responses": [
+      "Of course, {user_name}! Take your time \u2014 I'll be right here. \u23f3",
+      "No rush, {user_name}! I'll wait as long as you need.",
+      "Sure, {user_name}! I'm not going anywhere. \ud83d\ude0a",
+      "Take your time, {user_name}! I'll be here whenever you're ready.",
+      "No problem, {user_name}! I'm here whenever you need me."
+    ],
+    "show_examples": false,
+    "example_prompts": [],
+    "priority": 3
+  }
+]

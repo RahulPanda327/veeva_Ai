@@ -36,7 +36,7 @@ log = logging.getLogger("export_live_to_kb")
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CACHE = BACKEND_DIR / "cache" / "endpoint_response_cache.json"
-DEFAULT_OUT = BACKEND_DIR / "Ai_assistant" / "kb"
+DEFAULT_OUT = BACKEND_DIR / "ai_assistant" / "kb"
 OUT_NAME = "repstream_live_data.txt"
 
 DIVIDER = "=" * 60

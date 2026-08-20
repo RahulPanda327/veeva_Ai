@@ -148,13 +148,6 @@ class ServiceFactory:
         return cls._db
 
     @classmethod
-    def get_sql_router(cls):
-        if cls._sql_router is None:
-            from db_qa.sql_query_router import SQLQueryRouter
-            cls._sql_router = SQLQueryRouter()
-        return cls._sql_router
-
-    @classmethod
     def get_charter(cls):
         if cls._charter is None:
             from db_qa.chart_generator import ChartGenerator
@@ -170,43 +163,28 @@ class ServiceFactory:
 
     @classmethod
     def create_langgraph(cls, scenario: int) -> BaseService:
-        from services.langgraph_service import LangGraphAdapterService
-        kwargs = {}
-        if scenario == 4:
-            kwargs["db_client"] = cls.get_db()
-            kwargs["router"] = cls.get_sql_router()
-            kwargs["charter"] = cls.get_charter()
-        return LangGraphAdapterService(cls._memory, cls.get_llm(), **kwargs)
+        raise ValueError(
+            "The LangGraph adapter was removed together with the SQL scenarios. "
+            "Set USE_LANGGRAPH=false."
+        )
 
     @classmethod
     def create_standard(cls, scenario: int) -> BaseService:
+        # Scenarios 2 and 4 were the SQL pipelines (natural language -> generated
+        # T-SQL -> execute). Both are gone; RepStream answers from embedded text
+        # via db_qa.pgvector_store and never generates SQL.
         if scenario == 1:
             from services.scenario_1_llm import LLMOnlyService
             return LLMOnlyService(cls._memory, cls.get_llm())
-        if scenario == 2:
-            from services.scenario_2_llm_rules import LLMWithRulesService
-            return LLMWithRulesService(
-                memory=cls._memory,
-                llm=cls.get_llm(),
-                rules=cls._rules,
-                db_client=cls.get_db(),
-                router=cls.get_sql_router(),
-                charter=cls.get_charter(),
-            )
         if scenario == 3:
             from services.scenario_3_embedding_rules import EmbeddingRulesService
             return EmbeddingRulesService(cls._memory, cls.get_embeddings(), cls._rules)
-        if scenario == 4:
-            from services.scenario_4_database import DatabaseQAService
-            llm = cls.get_llm() if cls.cfg_llm_fallback_enabled() else None
-            return DatabaseQAService(
-                memory=cls._memory,
-                db_client=cls.get_db(),
-                router=cls.get_sql_router(),
-                charter=cls.get_charter(),
-                llm=llm,
+        if scenario in (2, 4):
+            raise ValueError(
+                f"Scenario {scenario} was the SQL pipeline and has been removed. "
+                f"Use scenario 1 (LLM) or 3 (embeddings + rules)."
             )
-        raise ValueError(f"Invalid scenario: {scenario!r}. Must be 1, 2, 3, or 4.")
+        raise ValueError(f"Invalid scenario: {scenario!r}. Must be 1 or 3.")
 
     @classmethod
     def create(cls, scenario: Optional[int] = None) -> BaseService:
