@@ -1,0 +1,9 @@
+# Dependencies are consolidated in one file for both applications.
+# See repstream/requirements.txt — the RepStream backend and this chatbot share a
+# single environment, because their previous pins conflicted on every shared
+# package (fastapi, pydantic, scikit-learn, pyodbc, openai, httpx) and no one
+# venv could satisfy both.
+#
+# This file only forwards, so `pip install -r requirements.txt` from this folder
+# and the Dockerfile keep working unchanged.
+-r ../requirements.txt

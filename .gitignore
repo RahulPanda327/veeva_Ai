@@ -19,3 +19,14 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Runtime artefacts from the Ai_assistant chatbot — regenerated, not source.
+# The SQLite session store and the Chroma/pgvector output are machine-local
+# state; committing them would put stale sessions and embeddings in the repo.
+**/dbs/*.db
+**/kb/vectors/
+**/cache/
+**/results/
+**/charts/*.png
+*.log
+enterprise_rag.db*
