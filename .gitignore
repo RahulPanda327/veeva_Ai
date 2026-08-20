@@ -1,0 +1,21 @@
+# Third-party LLM runtime — not part of this project's source.
+# llama.cpp is an upstream clone (it carries its own .git, so committing it would
+# create an embedded repo); llama-bin holds its downloaded release binaries.
+# Both are large, machine-specific, and reproducible from upstream.
+llama.cpp/
+llama-bin/
+
+# Python virtualenv — a local build artifact, and Windows binaries in it are not
+# portable to another machine anyway.
+venv/
+.venv/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets — never commit. Covers .env.bak / .env.local / any backup copy.
+.env
+.env.*
+!.env.example

@@ -207,8 +207,89 @@ def warm_response_cache(base_url: str) -> None:
                     log.warning("  reset %s -> failed (%s)", path, exc)
 
 
+def refresh_assistant_kb(skip_embedding: bool = False,
+                         base_url: str = "http://localhost:8000") -> None:
+    """Push the freshly warmed data into the Ai_assistant chatbot's knowledge base.
+
+    Two steps, both as subprocesses so neither can take down a warm-up run that
+    has already succeeded:
+
+      1. export_live_to_kb.py — reads the response cache this run just populated
+         and rewrites Ai_assistant/kb/repstream_live_data.txt.
+      2. ingest_to_pgvector — re-embeds the kb folder, so the assistant answers
+         from the new numbers rather than the previous snapshot.
+
+    Step 2 needs Postgres up. If it is not, the export still stands and the
+    assistant keeps serving its previous embeddings, so a failure here degrades
+    rather than breaks.
+    """
+    import subprocess   # noqa: PLC0415
+
+    backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    assistant_dir = os.path.join(backend_dir, "Ai_assistant")
+
+    log.info("Refreshing the assistant knowledge base ...")
+    try:
+        result = subprocess.run(
+            [sys.executable, os.path.join("scripts", "export_live_to_kb.py"),
+             "--base-url", base_url],
+            cwd=backend_dir, capture_output=True, text=True, timeout=600,
+        )
+        for line in (result.stdout or "").splitlines():
+            if line.strip():
+                log.info("  %s", line.rstrip())
+        if result.returncode != 0:
+            log.warning("  export failed (exit %s): %s", result.returncode,
+                        (result.stderr or "").strip()[:300])
+            return
+    except Exception as exc:  # noqa: BLE001
+        log.warning("  export step failed (%s).", exc)
+        return
+
+    if skip_embedding:
+        log.info("  embedding skipped (--skip-embedding); run "
+                 "'python -m scripts.ingest_to_pgvector' when ready.")
+        return
+
+    if not os.path.isdir(assistant_dir):
+        log.warning("  Ai_assistant not found at %s - skipping embedding.", assistant_dir)
+        return
+
+    # Run the ingest with the CHATBOT's interpreter, not whichever one launched
+    # this warm-up: its dependencies (psycopg2, sentence-transformers, torch) live
+    # in that venv, so using sys.executable fails when the backend was started
+    # from a different environment.
+    assistant_py = os.path.join(assistant_dir, "venv", "Scripts", "python.exe")
+    if not os.path.isfile(assistant_py):
+        assistant_py = os.path.join(assistant_dir, "venv", "bin", "python")
+    if not os.path.isfile(assistant_py):
+        assistant_py = sys.executable
+
+    log.info("  embedding the knowledge base into pgvector ...")
+    try:
+        result = subprocess.run(
+            [assistant_py, "-m", "scripts.ingest_to_pgvector"],
+            cwd=assistant_dir, capture_output=True, text=True, timeout=1800,
+        )
+        for line in (result.stdout or "").splitlines()[-12:]:
+            if line.strip():
+                log.info("    %s", line.rstrip())
+        if result.returncode == 0:
+            log.info("  Assistant knowledge base is up to date.")
+        else:
+            # Show the tail, not the head: the useful line of a traceback is last.
+            for line in (result.stderr or "").strip().splitlines()[-6:]:
+                log.warning("    %s", line.rstrip())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("  embedding step failed (%s).", exc)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Pre-warm all AI caches, and the response cache, before business hours.")
+    parser.add_argument("--skip-assistant-kb", action="store_true",
+                        help="Do not refresh/re-embed the Ai_assistant knowledge base afterwards.")
+    parser.add_argument("--skip-embedding", action="store_true",
+                        help="Rewrite the assistant's kb file but skip the pgvector embedding step.")
     parser.add_argument("--territory-id", default=None, help="Warm only this territory instead of every territory.")
     parser.add_argument("--base-url", default="http://localhost:8000", help="Where the live server is, for response-cache warming.")
     parser.add_argument("--skip-response-cache", action="store_true", help="Only warm the 3 AI caches, skip the response cache step.")
@@ -248,6 +329,9 @@ def main():
         warm_response_cache(args.base_url)
 
     log.info("Warm-up run complete.")
+
+    if not args.skip_assistant_kb:
+        refresh_assistant_kb(skip_embedding=args.skip_embedding, base_url=args.base_url)
 
     if total and failed == total:
         # Every single territory failed — this is not a successful run,

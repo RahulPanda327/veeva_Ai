@@ -1,6 +1,7 @@
 """RepStream — FastAPI application entry point."""
 import logging
 import mimetypes
+import os
 import subprocess
 import sys
 import threading
@@ -13,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.routers import objection_handler, new_writer_id, territory_prioritization, action_center
+from app.routers import assistant, objection_handler, new_writer_id, territory_prioritization, action_center
 from app.utils.masking import BrandMaskingMiddleware
 from app.utils.response_cache import DailyResponseCacheMiddleware, clear_all as clear_all_cached_responses
 
@@ -30,7 +31,7 @@ mimetypes.add_type("application/vnd.openxmlformats-officedocument.presentationml
 mimetypes.add_type("application/pdf", ".pdf")
 
 
-def _refresh_endpoint_cache_background() -> None:
+def _refresh_endpoint_cache_background(skip_assistant_kb: bool = True) -> None:
     """Clear the response cache and re-warm the endpoints themselves — runs
     once on every app startup (no fixed clock time; tied to the process
     lifecycle instead). Runs in a background thread so server startup itself
@@ -69,10 +70,13 @@ def _refresh_endpoint_cache_background() -> None:
 
     time.sleep(5)
     try:
-        subprocess.run(
-            [sys.executable, "scripts/warm_cache.py", "--only-response-cache", "--base-url", _detect_base_url()],
-            cwd=_BACKEND_DIR,
-        )
+        cmd = [sys.executable, "scripts/warm_cache.py", "--only-response-cache",
+               "--base-url", _detect_base_url()]
+        if skip_assistant_kb:
+            # --warmup without --embedding: refresh the caches but leave the
+            # assistant's knowledge base as it was.
+            cmd.append("--skip-assistant-kb")
+        subprocess.run(cmd, cwd=_BACKEND_DIR)
     except Exception:
         logger.exception("Startup endpoint-cache refresh failed")
 
@@ -120,9 +124,53 @@ def _warm_new_writer_territories() -> None:
         logger.exception("New Writer ID territory pre-warm failed")
 
 
+def _flag(name: str) -> bool:
+    """Read a startup flag set by the launcher below.
+
+    Environment rather than sys.argv because uvicorn's --reload spawns a child
+    process; argv is rebuilt there, but the environment is inherited, so the flag
+    survives a reload. Absent means off.
+    """
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _embed_only() -> None:
+    """Re-embed the assistant knowledge base without warming anything first.
+
+    Exports from whatever the response cache already holds, so it reflects the
+    last warm-up rather than this instant.
+    """
+    logger.info("Startup: --embedding only (no warm-up).")
+    try:
+        from scripts.warm_cache import refresh_assistant_kb   # noqa: PLC0415
+
+        refresh_assistant_kb(base_url=_detect_base_url())
+    except Exception:
+        logger.exception("Startup embedding refresh failed")
+
+
+def _startup_tasks() -> None:
+    """Warm-up and/or embedding, per the flags the launcher passed through."""
+    do_warmup = _flag("REPSTREAM_WARMUP")
+    do_embedding = _flag("REPSTREAM_EMBEDDING")
+
+    if do_warmup:
+        # The KB refresh is warm_cache.py's own final step, so let it run there
+        # when embedding was also asked for — that keeps the ordering (warm-up
+        # first, embed second) defined in one place instead of two.
+        _refresh_endpoint_cache_background(skip_assistant_kb=not do_embedding)
+    elif do_embedding:
+        _embed_only()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
-    threading.Thread(target=_refresh_endpoint_cache_background, daemon=True, name="startup-cache-refresh").start()
+    if _flag("REPSTREAM_WARMUP") or _flag("REPSTREAM_EMBEDDING"):
+        threading.Thread(target=_startup_tasks, daemon=True,
+                         name="startup-cache-refresh").start()
+    else:
+        logger.info("Startup: no --warmup or --embedding flag - serving immediately. "
+                    "Endpoints will be slow until a warm-up runs.")
     yield
 
 
@@ -154,6 +202,7 @@ app.include_router(territory_prioritization.router, prefix="/api/v1")
 app.include_router(new_writer_id.router, prefix="/api/v1")
 app.include_router(objection_handler.router, prefix="/api/v1")
 app.include_router(action_center.router, prefix="/api/v1")
+app.include_router(assistant.router, prefix="/api/v1")
 
 # Serves the real files in backend/resources/ (e.g. payer-access support docs)
 # at /api/v1/resources/<filename> — real, clickable, downloadable links.
@@ -176,3 +225,84 @@ async def clear_response_cache():
     """
     cleared = clear_all_cached_responses()
     return {"cleared": cleared}
+
+
+# ── Launcher ─────────────────────────────────────────────────────────────────
+# Run the server directly, with two optional flags uvicorn itself cannot accept:
+#
+#   python main.py --reload --host 0.0.0.0 --port 8003
+#   python main.py --reload --host 0.0.0.0 --port 8003 --warmup
+#   python main.py --reload --host 0.0.0.0 --port 8003 --warmup --embedding
+#   python main.py --reload --host 0.0.0.0 --port 8003 --embedding
+#
+# uvicorn parses its own arguments with click and exits on anything it does not
+# recognise, before this module is imported - so `uvicorn main:app --warmup`
+# cannot work. Running this file directly gives the flags somewhere to live.
+#
+# `uvicorn main:app ...` still works exactly as before; this block simply is not
+# executed then, and no flags means no warm-up and no embedding.
+
+_LAUNCH_FLAGS = {
+    "--warmup": "REPSTREAM_WARMUP",
+    "-warmup": "REPSTREAM_WARMUP",
+    "--embedding": "REPSTREAM_EMBEDDING",
+    "-embedding": "REPSTREAM_EMBEDDING",
+    "--embeddings": "REPSTREAM_EMBEDDING",
+    "-embeddings": "REPSTREAM_EMBEDDING",
+}
+
+
+def _launch() -> None:
+    warmup = embedding = False
+    host, port, reload_flag, log_level = "127.0.0.1", 8000, False, None
+
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        a = args[i]
+        flag = _LAUNCH_FLAGS.get(a.lower())
+        if flag == "REPSTREAM_WARMUP":
+            warmup = True
+        elif flag == "REPSTREAM_EMBEDDING":
+            embedding = True
+        elif a == "--host" and i + 1 < len(args):
+            host = args[i + 1]; i += 2; continue
+        elif a == "--port" and i + 1 < len(args):
+            port = int(args[i + 1]); i += 2; continue
+        elif a == "--log-level" and i + 1 < len(args):
+            log_level = args[i + 1]; i += 2; continue
+        elif a == "--reload":
+            reload_flag = True
+        else:
+            print(f"[main.py] ignoring unrecognised argument: {a}")
+        i += 1
+
+    # Passed by environment, not argv: --reload spawns a child process that
+    # rebuilds its arguments but inherits the environment, so the flag survives.
+    os.environ["REPSTREAM_WARMUP"] = "1" if warmup else "0"
+    os.environ["REPSTREAM_EMBEDDING"] = "1" if embedding else "0"
+
+    if warmup and embedding:
+        plan = "warm-up, then re-embed the assistant knowledge base"
+    elif warmup:
+        plan = "warm-up only (knowledge base left as-is)"
+    elif embedding:
+        plan = "re-embed the assistant knowledge base only (no warm-up)"
+    else:
+        plan = "serve only - no warm-up, no embedding"
+    print(f"[main.py] {plan}", flush=True)
+
+    # _detect_base_url() reads these back to work out where the warm-up should
+    # call in, so leave them on argv in the form it expects.
+    sys.argv = [sys.argv[0], "--host", host, "--port", str(port)]
+
+    import uvicorn
+
+    kwargs = {"host": host, "port": port, "reload": reload_flag}
+    if log_level:
+        kwargs["log_level"] = log_level
+    uvicorn.run("main:app", **kwargs)
+
+
+if __name__ == "__main__":
+    _launch()

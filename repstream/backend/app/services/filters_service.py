@@ -85,8 +85,13 @@ _FILTER_SQL = text(f"""
     SELECT DISTINCT
         Manager_Employee_Durable_Id AS manager_id,
         Manager_Name                AS manager_name,
+        Manager_EMAIL               AS manager_email,
         Employee_Durable_Id         AS employee_id,
         Employee_Name               AS employee_name,
+        -- USER_EMAIL, not Email: `Email` holds a different person per row for the
+        -- same employee (it is not their own address), whereas USER_EMAIL is
+        -- consistently the employee's own.
+        USER_EMAIL                  AS employee_email,
         Territory_Durable_Id        AS territory_id,
         Territory_Name              AS territory_name
     FROM {settings.HUB_SCHEMA}.vw_tdim_employee_zenpep_reporting_dul
@@ -204,8 +209,18 @@ def get_org_filters(db: Session, salesforce: str = DEFAULT_SALESFORCE) -> dict:
     managers: dict[str, dict] = {}
     for r in rows:
         mid, eid, tid = r["manager_id"], r["employee_id"], r["territory_id"]
-        m = managers.setdefault(mid, {"manager_id": mid, "manager_name": r["manager_name"], "_emps": {}})
-        e = m["_emps"].setdefault(eid, {"employee_id": eid, "employee_name": r["employee_name"], "_terrs": {}})
+        m = managers.setdefault(mid, {"manager_id": mid, "manager_name": r["manager_name"],
+                                      "manager_email": r["manager_email"], "_emps": {}})
+        # SELECT DISTINCT can yield several rows per person; keep the first
+        # non-null email rather than letting a null row overwrite a good one.
+        if not m.get("manager_email") and r["manager_email"]:
+            m["manager_email"] = r["manager_email"]
+
+        e = m["_emps"].setdefault(eid, {"employee_id": eid, "employee_name": r["employee_name"],
+                                        "employee_email": r["employee_email"], "_terrs": {}})
+        if not e.get("employee_email") and r["employee_email"]:
+            e["employee_email"] = r["employee_email"]
+
         e["_terrs"].setdefault(tid, {"territory_id": tid, "territory_name": r["territory_name"]})
 
     tree = {
@@ -213,10 +228,12 @@ def get_org_filters(db: Session, salesforce: str = DEFAULT_SALESFORCE) -> dict:
             {
                 "manager_id": m["manager_id"],
                 "manager_name": m["manager_name"],
+                "manager_email": m.get("manager_email"),
                 "employee_id": [
                     {
                         "employee_id": e["employee_id"],
                         "employee_name": e["employee_name"],
+                        "employee_email": e.get("employee_email"),
                         "territory_id": sorted(
                             e["_terrs"].values(), key=lambda t: (t["territory_id"] or "")
                         ),

@@ -24,12 +24,22 @@ class TerritoryFilterItem(BaseModel):
 class EmployeeFilterItem(BaseModel):
     employee_id: str = Field(description="Employee_Durable_Id, e.g. A09000000000149")
     employee_name: Optional[str] = None
+    employee_email: Optional[str] = Field(
+        default=None,
+        description="Employee's email — vw_tdim_employee_zenpep_reporting_dul.USER_EMAIL",
+        examples=["jenny.wedemeyer@us.usnestle.com"],
+    )
     territory_id: List[TerritoryFilterItem] = Field(default_factory=list, description="Territories owned by this employee")
 
 
 class ManagerFilterItem(BaseModel):
     manager_id: str = Field(description="Manager_Employee_Durable_Id, e.g. A09000000049003")
     manager_name: Optional[str] = None
+    manager_email: Optional[str] = Field(
+        default=None,
+        description="Manager's email — vw_tdim_employee_zenpep_reporting_dul.Manager_EMAIL",
+        examples=["michele.oconnell@us.nestle.com"],
+    )
     employee_id: List[EmployeeFilterItem] = Field(default_factory=list, description="Employees reporting to this manager")
 
 
