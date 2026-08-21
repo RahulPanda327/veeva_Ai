@@ -1,6 +1,11 @@
 # RepStream — the single dependency file for the whole project.
 #
-# Covers BOTH applications, which share one virtualenv (repstream/venv):
+# Lives in backend/ alongside .env and main.py, so this folder is self-contained:
+# it can be copied to a deployment target as-is. On the VM these same files sit
+# at the root (veeva_ai_main/), which is why nothing resolves paths by a fixed
+# number of parent directories — see the note in app/config.py.
+#
+# Covers BOTH applications, which share one virtualenv:
 #   backend/                the RepStream API
 #   backend/ai_assistant/   the Datastream chatbot
 #
@@ -14,6 +19,7 @@
 # newer, and nothing in the backend needs an older release. Shared packages are
 # therefore >= rather than ==, so one install serves both.
 #
+#   cd backend
 #   python -m venv venv
 #   venv\Scripts\activate
 #   pip install -r requirements.txt

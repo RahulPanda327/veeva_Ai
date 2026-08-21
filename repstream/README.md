@@ -113,6 +113,8 @@ LLM_STUB_MODE=False   # true = skip GPT-4o calls, return stub text (no API key n
 ## Step 3 — Create virtual environment and install dependencies
 
 ```bash
+cd backend
+
 python -m venv venv
 
 # Windows
@@ -123,6 +125,9 @@ source venv/bin/activate
 
 pip install -r requirements.txt
 ```
+
+One virtualenv serves both the API and the `ai_assistant/` chatbot — see the
+header of `requirements.txt` for why they share it.
 
 ---
 
