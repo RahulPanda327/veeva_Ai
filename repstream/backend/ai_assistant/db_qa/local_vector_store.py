@@ -35,6 +35,8 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -68,6 +70,32 @@ class LocalVectorStore:
         self._vectors: Optional[np.ndarray] = None   # (N, dim) float32, normalised
         self._rows: list[dict] = []
         self._loaded = False
+        self._defer = 0          # >0 while inside bulk(): suppresses per-row writes
+        self._dirty = False
+
+    @contextmanager
+    def bulk(self):
+        """Batch an ingest into a single write.
+
+        Without this, store() persists the whole archive on every row: a 138-chunk
+        ingest rewrote ~125 KB 138 times, which is slow and — more to the point —
+        gives a concurrent process or a virus scanner 138 chances to be holding
+        the file during os.replace instead of one.
+        """
+        self._defer += 1
+        try:
+            yield self
+        finally:
+            self._defer -= 1
+            if self._defer == 0 and self._dirty:
+                self._flush()
+                self._dirty = False
+
+    def _maybe_flush(self) -> None:
+        if self._defer:
+            self._dirty = True
+            return
+        self._flush()
 
     # ── Model ────────────────────────────────────────────────────────────────
 
@@ -106,21 +134,29 @@ class LocalVectorStore:
         if self._loaded:
             return
         self._loaded = True
-        if not (VECTORS_FILE.is_file() and META_FILE.is_file()):
+        if not VECTORS_FILE.is_file():
             self._vectors = np.zeros((0, EMBEDDING_DIM), dtype=np.float32)
             self._rows = []
             return
         try:
-            with np.load(VECTORS_FILE) as data:
+            with np.load(VECTORS_FILE, allow_pickle=False) as data:
                 self._vectors = data["vectors"].astype(np.float32)
-            self._rows = json.loads(META_FILE.read_text(encoding="utf-8"))
+                if "meta" in data.files:
+                    self._rows = json.loads(str(data["meta"]))
+                else:
+                    # Archive written by the earlier two-file layout, where the
+                    # metadata lived only in embeddings_meta.json. Read it from
+                    # there; the next _flush() rewrites in the single-file format.
+                    logger.info({"event": "local_store_legacy_format"})
+                    self._rows = (json.loads(META_FILE.read_text(encoding="utf-8"))
+                                  if META_FILE.is_file() else [])
             if len(self._rows) != len(self._vectors):
-                # The two files are written together; a mismatch means one was
-                # replaced without the other. Refusing beats returning a hit
-                # whose text belongs to a different chunk.
+                # Cannot happen while both live in one archive, but a hand-edited
+                # or truncated file still gets caught rather than silently pairing
+                # a vector with someone else's text.
                 raise ValueError(
                     f"{VECTORS_FILE.name} has {len(self._vectors)} vectors but "
-                    f"{META_FILE.name} has {len(self._rows)} rows. Re-run the ingest."
+                    f"{len(self._rows)} metadata rows. Re-run the ingest."
                 )
             logger.info({"event": "local_store_loaded", "rows": len(self._rows)})
         except Exception as exc:  # noqa: BLE001
@@ -128,25 +164,67 @@ class LocalVectorStore:
             raise
 
     def _flush(self) -> None:
-        """Write both files, atomically, so a crash cannot leave them disagreeing."""
+        """Persist the store as ONE archive, replaced atomically.
+
+        Vectors and metadata live in the same .npz on purpose. They were two
+        files, which meant two os.replace calls: if the second failed — and on
+        Windows it does whenever another process has the file open — the store
+        was left with N vectors and N-1 rows, i.e. every vector after the break
+        paired with the wrong text. One archive makes that state unreachable:
+        either the replace lands and both are current, or it does not and both
+        stay as they were.
+
+        embeddings_meta.json is still written afterwards, but only as a
+        human-readable convenience copy. Nothing reads it; if it is stale or
+        missing, the store is unaffected.
+
+        The retry exists because os.replace on Windows fails with Access Denied
+        while any other process holds the destination open — a concurrent ingest,
+        or an antivirus scanner that grabbed the file the moment it appeared.
+        Backing off briefly clears both far more often than not.
+        """
         STORE_DIR.mkdir(parents=True, exist_ok=True)
         vectors = self._vectors if self._vectors is not None else np.zeros(
             (0, EMBEDDING_DIM), dtype=np.float32)
+        meta = json.dumps(self._rows, ensure_ascii=False)
 
-        for path, writer in (
-            (VECTORS_FILE, lambda f: np.savez_compressed(f, vectors=vectors)),
-            (META_FILE, lambda f: f.write(
-                json.dumps(self._rows, ensure_ascii=False, indent=1).encode("utf-8"))),
-        ):
+        last: Optional[Exception] = None
+        for attempt in range(5):
             fd, tmp = tempfile.mkstemp(dir=str(STORE_DIR), suffix=".tmp")
             try:
                 with os.fdopen(fd, "wb") as fh:
-                    writer(fh)
-                os.replace(tmp, path)
+                    np.savez_compressed(fh, vectors=vectors, meta=np.array(meta))
+                os.replace(tmp, VECTORS_FILE)
+                break
+            except PermissionError as exc:
+                last = exc
+                if os.path.exists(tmp):
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
+                time.sleep(0.2 * (attempt + 1))
             except Exception:
                 if os.path.exists(tmp):
-                    os.unlink(tmp)
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
                 raise
+        else:
+            raise RuntimeError(
+                f"Could not write {VECTORS_FILE.name} after 5 attempts: {last}. "
+                f"Another process is most likely writing the same store — check for "
+                f"a second server or ingest running against this checkout."
+            ) from last
+
+        # Best-effort sidecar for humans. Never read back, so a failure here is
+        # not worth failing the ingest over.
+        try:
+            META_FILE.write_text(json.dumps(self._rows, ensure_ascii=False, indent=1),
+                                 encoding="utf-8")
+        except OSError as exc:
+            logger.warning({"event": "local_store_sidecar_failed", "error": str(exc)})
 
     # ── Write ────────────────────────────────────────────────────────────────
 
@@ -170,7 +248,7 @@ class LocalVectorStore:
             "content": content,
             "metadata": metadata or {},
         })
-        self._flush()
+        self._maybe_flush()
 
     def clear_source(self, source: str) -> None:
         """Drop every row for *source* so it can be re-ingested cleanly."""
@@ -182,7 +260,7 @@ class LocalVectorStore:
                          else np.zeros((0, EMBEDDING_DIM), dtype=np.float32))
         for n, row in enumerate(self._rows, 1):
             row["id"] = n
-        self._flush()
+        self._maybe_flush()
         logger.info({"event": "local_store_cleared", "source": source, "removed": removed})
 
     # ── Read ─────────────────────────────────────────────────────────────────

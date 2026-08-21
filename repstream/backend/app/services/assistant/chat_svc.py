@@ -207,10 +207,19 @@ def chat(question: str, top_k: int = 6, min_score: float = 0.15) -> Dict[str, An
     try:
         hits: List[dict] = _store().search(question, top_k=top_k, min_score=min_score)
     except Exception as exc:  # noqa: BLE001
-        log.warning("vector search failed (%s)", exc)
+        # Name the store that actually failed rather than assuming Postgres: which
+        # backend is in use depends on VECTOR_STORE, and telling someone running
+        # the file-based store to "check that PostgreSQL is running" sends them
+        # after a service this deployment does not even have.
+        try:
+            from db_qa.vector_store import store_label   # noqa: PLC0415
+
+            where = store_label()
+        except Exception:  # noqa: BLE001
+            where = "the configured vector store"
+        log.warning("vector search failed against %s (%s)", where, exc)
         return _result(
-            "The knowledge base is unavailable - its vector database could not be "
-            "reached. Check that PostgreSQL is running.",
+            f"The knowledge base is unavailable - {where} could not be reached.",
             started=started, answer_type="error",
             matched_template="Vector Store Unavailable", source="none")
 

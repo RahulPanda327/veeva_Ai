@@ -48,6 +48,16 @@ class HCPRankedItem(BaseModel):
     last_rx_date: Optional[str] = None           # most recent date with Zenpep Rx > 0
     last_call_date: Optional[str] = None          # HCP dim view Modified_Date
     ai_priority_tier: Literal["HIGH", "MEDIUM", "LOW"] = "LOW"
+    # The composite score the tier is derived from, as a display string ("70.44%").
+    # Declared here or FastAPI drops it: response_model=List[HCPRankedItem] filters
+    # the payload to the fields on this model, so a key the service sets but the
+    # schema does not name never reaches the client.
+    ai_score: Optional[str] = Field(
+        default=None, description="Composite AI priority score, formatted for display"
+    )
+    ai_score_reason: Optional[str] = Field(
+        default=None, description="One or two sentences explaining how ai_score was reached"
+    )
     ai_generated_insight: Optional[str] = None
 
 

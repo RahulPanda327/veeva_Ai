@@ -19,6 +19,7 @@ Or with a direct path:
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import sys
@@ -37,6 +38,26 @@ BUSINESS_LOGIC_FILE = KB_DIR / "business_logic.txt"
 # Written by the RepStream warm-up — the live application data (HCP priorities,
 # alerts, objections, new writers). Uses the same === dividers as the context file.
 REPSTREAM_LIVE_FILE = KB_DIR / "repstream_live_data.txt"
+
+# Curated greeting rules. Answered by exact trigger match in chat_svc BEFORE any
+# retrieval runs, so embedding them changes nothing for "hi"/"thanks".
+GREETINGS_FILE = KB_DIR / "kb_greetings.json"
+
+# Hand-written markdown context describing what the live JSON data MEANS: how the
+# module works, what each field is, and where the data is known to be wrong. The
+# live data file says a territory has 68 HCPs; these say what an HCP, a tier and a
+# priority score actually are, so the model can interpret rather than just recite.
+#   (source name, path)
+MARKDOWN_DOCS = [
+    ("system_instructions", KB_DIR / "00_SYSTEM_INSTRUCTIONS.md"),
+    ("module_knowledge",    KB_DIR / "10_KNOWLEDGE_territory_prioritization.md"),
+    ("data_quality",        KB_DIR / "90_DATA_QUALITY_devdocs.md"),
+]
+
+# Sources whose input file no longer exists. Their rows are cleared rather than
+# left behind: a deleted KB file whose embeddings survive keeps answering from
+# content nobody can see any more.
+_RETIRED_SOURCES = ("context_file", "kb_question", "business_logic")
 
 # Lines that are nothing but '=' characters (section dividers)
 _DIVIDER = re.compile(r"^={10,}\s*$", re.MULTILINE)
@@ -101,6 +122,87 @@ def _split_long(part: str, max_chars: int) -> list[str]:
         pieces.append(f"{header}\n" + "\n".join(current) if header else "\n".join(current))
 
     return [p.strip() for p in pieces if p.strip()]
+
+
+def chunk_markdown_file(path: Path, source: str) -> list[dict]:
+    """Split a markdown doc on its `## ` headings.
+
+    Every chunk keeps the document's `# ` title prefixed to it. Retrieval returns
+    one chunk with no surrounding context, so a section headed "## 3. Access
+    scope" is ambiguous on its own - scope of WHAT? Carrying the H1 down into each
+    chunk is what lets the model tell these three documents apart, and it is the
+    same lesson as the live-data export: a heading that lives in a different chunk
+    from its body might as well not exist.
+
+    Sections longer than _MAX_CHUNK_CHARS are split rather than truncated.
+    """
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    doc_title = ""
+    for line in lines[:10]:
+        if line.startswith("# "):
+            doc_title = line.lstrip("# ").strip()
+            break
+    doc_title = doc_title or path.stem
+
+    # Walk the file accumulating lines under the current H2.
+    sections: list[tuple[str, list[str]]] = []
+    current_head, current_body = doc_title, []
+    for line in lines:
+        if line.startswith("## "):
+            if any(l.strip() for l in current_body):
+                sections.append((current_head, current_body))
+            current_head, current_body = line.lstrip("# ").strip(), []
+        else:
+            current_body.append(line)
+    if any(l.strip() for l in current_body):
+        sections.append((current_head, current_body))
+
+    chunks: list[dict] = []
+    for i, (head, body) in enumerate(sections, 1):
+        body_text = "\n".join(body).strip()
+        if len(body_text) < 40:
+            continue                       # a heading with nothing under it
+        title = f"{doc_title} — {head}" if head != doc_title else doc_title
+        for j, piece in enumerate(_split_long(body_text, _MAX_CHUNK_CHARS), 1):
+            suffix = f"_p{j}" if j > 1 else ""
+            chunks.append({
+                "chunk_id": f"{source}_{i}{suffix}",
+                "title": title,
+                # Title repeated inside the content so it is embedded too, not
+                # just stored as metadata the vector never sees.
+                "content": f"{title}\n\n{piece}",
+            })
+    return chunks
+
+
+def load_greetings(path: Path) -> list[dict]:
+    """One chunk per greeting rule.
+
+    NOTE: chat_svc answers greetings by exact trigger match BEFORE searching, so
+    these embeddings are not what makes "hi" work - that path is unchanged. They
+    only help when a greeting is phrased conversationally enough to miss the
+    exact match ("hey there, good morning"). The trade is a little retrieval
+    noise: a short vague question can now match a greeting chunk instead of real
+    data. If that shows up, drop this source rather than lowering top_k.
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    rules = data if isinstance(data, list) else []
+    chunks: list[dict] = []
+    for i, rule in enumerate(rules, 1):
+        triggers = [str(t) for t in (rule.get("triggers") or []) if t]
+        responses = [str(r) for r in (rule.get("responses") or []) if r]
+        if not triggers or not responses:
+            continue
+        chunks.append({
+            "chunk_id": f"greeting_{i}",
+            "title": f"Greeting: {triggers[0]}",
+            "content": ("Conversational greeting or small talk.\n"
+                        f"User says: {', '.join(triggers)}\n"
+                        f"Assistant replies: {responses[0]}"),
+        })
+    return chunks
 
 
 def chunk_context_file(path: Path) -> list[dict]:
@@ -259,6 +361,71 @@ def main() -> None:
     print(f"Preparing vector store: {store_label()} ...")
     store.ensure_table()
 
+    # The local store persists on every store() unless told otherwise. Batching
+    # the whole ingest into one write is both faster and far less likely to
+    # collide with another process holding the file. pgvector has no such
+    # method, so fall back to a no-op context for it.
+    bulk = getattr(store, "bulk", None)
+    with bulk() if bulk else contextlib.nullcontext():
+        _ingest_all(store)
+    # Printed AFTER the context exits, i.e. after the single write has actually
+    # landed. Reporting success before the flush is how a failed write ends up
+    # looking like a completed ingest.
+    print(f"\nIngestion complete. Total rows in {store_label()}: {store.count()}")
+
+
+def _ingest_all(store) -> None:
+
+    # ── Markdown context docs ────────────────────────────────────────────────────
+    # Ingested first so they are the oldest rows: ordering does not affect search,
+    # but it keeps the console output readable when something goes wrong.
+    for source, path in MARKDOWN_DOCS:
+        print(f"\nReading {path.name} ...")
+        if not path.exists():
+            print(f"  WARNING: {path} not found — skipping")
+            store.clear_source(source)   # nothing to ingest; drop any stale rows
+            continue
+        md_chunks = chunk_markdown_file(path, source)
+        print(f"  {len(md_chunks)} section(s) extracted")
+        print(f"  Clearing old '{source}' rows ...")
+        store.clear_source(source)
+        for i, chunk in enumerate(md_chunks, 1):
+            store.store(
+                source=source,
+                chunk_id=chunk["chunk_id"],
+                title=chunk["title"],
+                content=chunk["content"],
+                metadata={"file": path.name},
+            )
+            print(f"    [{i}/{len(md_chunks)}] {chunk['chunk_id']} — {chunk['title'][:70]}")
+
+    # ── Greetings ────────────────────────────────────────────────────────────────
+    print(f"\nReading {GREETINGS_FILE.name} ...")
+    if not GREETINGS_FILE.exists():
+        print(f"  WARNING: {GREETINGS_FILE} not found — skipping")
+        store.clear_source("greetings")
+    else:
+        greet_chunks = load_greetings(GREETINGS_FILE)
+        print(f"  {len(greet_chunks)} greeting rule(s) loaded")
+        print("  Clearing old 'greetings' rows ...")
+        store.clear_source("greetings")
+        for i, chunk in enumerate(greet_chunks, 1):
+            store.store(
+                source="greetings",
+                chunk_id=chunk["chunk_id"],
+                title=chunk["title"],
+                content=chunk["content"],
+                metadata={"file": GREETINGS_FILE.name},
+            )
+        print(f"    stored {len(greet_chunks)} greeting chunk(s)")
+
+    # ── Retired sources ──────────────────────────────────────────────────────────
+    # These KB files were removed from the project. Their embeddings would
+    # otherwise survive every re-ingest, because a source is only cleared inside
+    # the branch that re-reads its file.
+    for source in _RETIRED_SOURCES:
+        store.clear_source(source)
+
     # ── Context file ─────────────────────────────────────────────────────────────
     print(f"\nReading {CONTEXT_FILE.name} ...")
     if not CONTEXT_FILE.exists():
@@ -349,8 +516,7 @@ def main() -> None:
                 f"{chunk['chunk_id']} — {chunk['title'][:65]}"
             )
 
-    total = store.count()
-    print(f"\nIngestion complete. Total rows in {store_label()}: {total}")
+    return store.count()
 
 
 if __name__ == "__main__":

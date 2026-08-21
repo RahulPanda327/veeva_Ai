@@ -34,6 +34,11 @@ from app.services.territory_prioritization.llm_insight import (
     regenerate_single_hcp_insight,
     warm_insights,
 )
+from app.services.territory_prioritization.score_reason import (
+    count_uncached_reasons,
+    generate_score_reasons_for_list,
+    warm_score_reasons,
+)
 from app.services.territory_prioritization.weekly_target import build_territory_summary
 from app.utils.auth import RepIdentity, get_current_rep
 from app.utils.cache import cache_get, cache_set, territory_cache_key
@@ -69,14 +74,21 @@ _INSIGHT_WARM_LIMIT = 60
 
 
 def _maybe_warm_insights_async(territory_id: str, ranked: List[dict]) -> None:
-    """Fire-and-forget: generate real Ollama insights for the top displayed HCPs
-    still on the template, in a daemon thread. Next page load serves them from
-    cache. Capped to _INSIGHT_WARM_LIMIT so it can't flood a local model."""
+    """Fire-and-forget: generate real Ollama insights AND ai_score_reason text for
+    the top displayed HCPs still on the template, in a daemon thread. Next page
+    load serves them from cache. Capped to _INSIGHT_WARM_LIMIT so it can't flood
+    a local model.
+
+    Both are checked before starting: the two have SEPARATE on-disk caches, so a
+    territory whose insights are all warmed may still have every score reason
+    missing. Returning on the insight count alone would leave those permanently
+    on the rule-based fallback.
+    """
     subset = ranked[:_INSIGHT_WARM_LIMIT]
     with _warm_lock:
         if territory_id in _warming_territories:
             return
-        if count_uncached_insights(subset) == 0:
+        if count_uncached_insights(subset) == 0 and count_uncached_reasons(subset) == 0:
             return
         _warming_territories.add(territory_id)
 
@@ -85,6 +97,11 @@ def _maybe_warm_insights_async(territory_id: str, ranked: List[dict]) -> None:
             warm_insights(subset)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Insight warmer failed for %s: %s", territory_id, exc)
+        try:
+            # Separate try: a failure warming insights must not skip the reasons.
+            warm_score_reasons(subset)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Score reason warmer failed for %s: %s", territory_id, exc)
         finally:
             with _warm_lock:
                 _warming_territories.discard(territory_id)
@@ -182,9 +199,11 @@ def _get_ranked_hcps(db: Session, territory_id: str, ref_date: date) -> List[dic
         with _ranked_mem_lock:
             cached = _ranked_mem.get(cache_key)
     if cached:
-        # Re-attach insights so any Ollama text produced by the background warmer
-        # since this list was cached is picked up (cache stores template-only).
+        # Re-attach insights and score reasons so any Ollama text produced by the
+        # background warmer since this list was cached is picked up (the cache
+        # stores template-only).
         generate_insights_for_list(cached)
+        generate_score_reasons_for_list(cached)
         _maybe_warm_insights_async(territory_id, cached)
         return cached
 
@@ -259,9 +278,11 @@ def _get_ranked_hcps(db: Session, territory_id: str, ref_date: date) -> List[dic
     # Enrich with all 4 AI/ML techniques (scores + prediction + NLP + badges)
     ranked = enrich_all_hcps(features, call_stats_map)
 
-    # Attach insights READ-ONLY (cached real Ollama text, else instant template),
-    # then kick off background generation for any HCP still on the template.
+    # Attach insights + ai_score_reason READ-ONLY (cached real Ollama text, else
+    # the instant rule-based text), then kick off background generation for any
+    # HCP still on a template. Neither call ever hits the LLM inline.
     generate_insights_for_list(ranked)
+    generate_score_reasons_for_list(ranked)
     _maybe_warm_insights_async(territory_id, ranked)
 
     # Add period metadata
