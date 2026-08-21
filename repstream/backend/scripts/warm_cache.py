@@ -265,7 +265,10 @@ def refresh_assistant_kb(skip_embedding: bool = False,
     if not os.path.isfile(assistant_py):
         assistant_py = sys.executable
 
-    log.info("  embedding the knowledge base into pgvector ...")
+    # Says "vector store" rather than naming a backend: which one runs is chosen
+    # by VECTOR_STORE (local file vs pgvector), and the ingest itself prints the
+    # concrete destination on its next line.
+    log.info("  embedding the knowledge base into the vector store ...")
     try:
         result = subprocess.run(
             [assistant_py, "-m", "scripts.ingest_to_pgvector"],

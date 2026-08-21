@@ -28,7 +28,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from db_qa.pgvector_store import get_pgvector_store, TABLE_NAME  # noqa: E402
+from db_qa.vector_store import get_vector_store, store_label  # noqa: E402
 
 KB_DIR              = ROOT / "kb"
 CONTEXT_FILE        = KB_DIR / "updated_context_file.txt"
@@ -254,9 +254,9 @@ def chunk_business_logic_file(path: Path) -> list[dict]:
 # ── Main ──────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    store = get_pgvector_store()
+    store = get_vector_store()
 
-    print(f"Setting up table '{TABLE_NAME}' and HNSW index ...")
+    print(f"Preparing vector store: {store_label()} ...")
     store.ensure_table()
 
     # ── Context file ─────────────────────────────────────────────────────────────
@@ -350,7 +350,7 @@ def main() -> None:
             )
 
     total = store.count()
-    print(f"\nIngestion complete. Total rows in '{TABLE_NAME}': {total}")
+    print(f"\nIngestion complete. Total rows in {store_label()}: {total}")
 
 
 if __name__ == "__main__":

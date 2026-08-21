@@ -154,9 +154,9 @@ def _answer_model() -> str:
 def _store():
     if _ASSISTANT_DIR not in sys.path:
         sys.path.insert(0, _ASSISTANT_DIR)
-    from db_qa.pgvector_store import get_pgvector_store   # noqa: PLC0415
+    from db_qa.vector_store import get_vector_store   # noqa: PLC0415
 
-    return get_pgvector_store()
+    return get_vector_store()
 
 
 def _result(answer: str, hits: Optional[List[dict]] = None, *, started: float,
@@ -207,7 +207,7 @@ def chat(question: str, top_k: int = 6, min_score: float = 0.15) -> Dict[str, An
     try:
         hits: List[dict] = _store().search(question, top_k=top_k, min_score=min_score)
     except Exception as exc:  # noqa: BLE001
-        log.warning("pgvector search failed (%s)", exc)
+        log.warning("vector search failed (%s)", exc)
         return _result(
             "The knowledge base is unavailable - its vector database could not be "
             "reached. Check that PostgreSQL is running.",
