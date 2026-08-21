@@ -28,7 +28,6 @@ from starlette.responses import Response
 
 from app.utils.cache_paths import cache_file
 from app.services.filters_service import FilterSelection, remember_filter
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -78,20 +77,20 @@ _load()
 
 
 def caller_key(request: Request) -> str:
-    """Identify the caller: their Bearer token if present, else their IP.
-    Shared by the response-cache key and the per-caller Active Alerts filter
-    memory so both scope to the same 'user'.
+    """Identify the caller for the response-cache key and the per-caller Active
+    Alerts filter memory, so both scope to the same 'user'.
 
-    In dev (DEV_SKIP_AUTH) every request resolves to the SAME identity and sees
-    the same data, so collapse everyone to one shared namespace — otherwise the
-    warm-up (localhost, no token) and real callers (token / different IP) get
-    different keys and the warmed JSON entries never hit."""
-    if settings.DEV_SKIP_AUTH:
-        return "shared"
-    caller = request.headers.get("authorization")
-    if not caller:
-        caller = request.client.host if request.client else "anonymous"
-    return caller
+    Authentication is disabled (see app/utils/auth.py), so every request already
+    resolves to the SAME identity and sees the same data. Everyone therefore
+    shares one namespace.
+
+    This is not just a simplification - it is required for the warm-up to be
+    worth anything. Keying on the Authorization header would file the warmed
+    entries under the warm-up's own key, and every later caller would miss on
+    every endpoint. Restoring real auth means restoring the per-caller branch
+    here at the same time.
+    """
+    return "shared"
 
 
 def _cache_key(request: Request) -> str:

@@ -1,4 +1,19 @@
-"""JWT authentication utilities and FastAPI dependency."""
+"""Caller identity for the API.
+
+AUTHENTICATION IS DISABLED. Every request resolves to the single identity below
+without presenting any credential, and no request can be rejected with 401.
+
+Why it is not simply deleted: the routers scope all their data by
+`rep.territory_id`, so they still need an identity object. What was removed is
+the credential CHECK, not the identity.
+
+The JWT helpers below are kept because tests and scripts/generate_test_token.py
+import them, and because restoring real auth means putting the check back into
+get_current_rep - see the note there.
+
+Do not deploy this to production or anywhere reachable by untrusted users: the
+whole API is open, and every caller sees the same rep's data.
+"""
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -11,8 +26,6 @@ from pydantic import BaseModel
 from app.config import settings
 
 bearer_scheme = HTTPBearer(auto_error=False)
-
-_DEV_SKIP_AUTH = settings.DEV_SKIP_AUTH
 
 
 class RepIdentity(BaseModel):
@@ -59,12 +72,25 @@ _DEV_IDENTITY = RepIdentity(
 )
 
 
-def get_current_rep(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
-) -> RepIdentity:
-    # DEV_SKIP_AUTH=true bypasses JWT — never use in production
-    if _DEV_SKIP_AUTH:
-        return _DEV_IDENTITY
-    if credentials is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    return decode_token(credentials.credentials)
+def get_current_rep() -> RepIdentity:
+    """The caller's identity. Always the same one — nothing is verified.
+
+    No Authorization header is read, so no request can 401. The DEV_SKIP_AUTH
+    setting is no longer consulted; it is left in config.py only so an existing
+    .env carrying it does not fail to load.
+
+    TO RESTORE REAL AUTHENTICATION, put back the check this replaced:
+
+        def get_current_rep(
+            credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+        ) -> RepIdentity:
+            if settings.DEV_SKIP_AUTH:
+                return _DEV_IDENTITY
+            if credentials is None:
+                raise HTTPException(status_code=401, detail="Not authenticated")
+            return decode_token(credentials.credentials)
+
+    and restore the token-based branch in response_cache.caller_key(), which was
+    flattened to a single shared namespace to match.
+    """
+    return _DEV_IDENTITY

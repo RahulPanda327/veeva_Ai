@@ -30,6 +30,54 @@ _WRITE_STMT_RE = re.compile(
 )
 
 
+def resolve_odbc_driver(configured: str = "") -> str:
+    """Pick a SQL Server ODBC driver that is installed on THIS machine.
+
+    The driver is an OS-level package rather than a pip dependency, so it varies
+    per host: dev boxes commonly carry 17, newer images ship 18, some have both.
+    Naming one version in .env means that file stops working the moment it is
+    copied to a machine with the other.
+
+      1. `configured` (DB_DRIVER) wins when set AND installed.
+      2. Otherwise the highest-numbered "ODBC Driver NN for SQL Server".
+      3. Otherwise any driver mentioning SQL Server.
+
+    Deliberately duplicated from app/database.py rather than imported: this
+    package must stay runnable on its own, without backend/ on sys.path.
+    """
+    try:
+        import pyodbc   # noqa: PLC0415
+        installed = pyodbc.drivers()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning({"event": "odbc_probe_failed", "error": str(exc)})
+        return "ODBC Driver 17 for SQL Server"
+
+    wanted = (configured or "").strip().strip("{}").strip()
+    if wanted and wanted in installed:
+        return wanted
+    if wanted:
+        logger.warning({"event": "odbc_driver_not_installed",
+                        "wanted": wanted, "installed": installed})
+
+    numbered = []
+    for name in installed:
+        m = re.fullmatch(r"ODBC Driver (\d+) for SQL Server", name)
+        if m:
+            numbered.append((int(m.group(1)), name))
+    if numbered:
+        return max(numbered)[1]
+
+    for name in installed:
+        if "SQL Server" in name:
+            return name
+
+    raise RuntimeError(
+        "No SQL Server ODBC driver is installed on this machine. "
+        f"pyodbc reports: {installed or 'none'}. Install 'ODBC Driver 18 for SQL Server' "
+        "(or 17), or set DB_DRIVER in .env to one that is installed."
+    )
+
+
 class ReadOnlyViolation(ValueError):
     """Raised when a query would modify the database."""
 
@@ -50,7 +98,7 @@ class SQLServerClient:
                 "Set DB_HOST, DB_NAME, DB_USER, DB_PASSWORD in .env."
             )
         return ";".join([
-            f"DRIVER={cfg.db_driver}",
+            f"DRIVER={resolve_odbc_driver(cfg.db_driver)}",
             f"SERVER={cfg.db_host}",
             f"DATABASE={cfg.db_name}",
             f"UID={cfg.db_user}",
