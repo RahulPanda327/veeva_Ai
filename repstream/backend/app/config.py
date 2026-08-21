@@ -5,14 +5,33 @@ from typing import List
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# One .env for the whole project, at the repstream root — shared with the
-# ai_assistant chatbot. Resolved as an absolute path rather than the bare ".env",
-# which pydantic reads relative to the CURRENT WORKING DIRECTORY: that silently
-# picked up a different file (or none) depending on where the process was
-# started from.
-#   this file: repstream/backend/app/config.py
-# parents[0]=app, parents[1]=backend, parents[2]=repstream.
-_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+# One .env for the whole project, shared with the ai_assistant chatbot.
+#
+# Resolved as an absolute path rather than the bare ".env", which pydantic reads
+# relative to the CURRENT WORKING DIRECTORY: that silently picked up a different
+# file (or none) depending on where the process was started from.
+#
+# Found by walking UP from this file to the nearest .env, rather than a fixed
+# parents[N]. The tree is not the same everywhere it is deployed:
+#   dev : repstream/backend/app/config.py   -> .env is 2 levels up
+#   vm  : veeva_ai_main/app/config.py       -> .env is 1 level up
+# A hardcoded parents[2] overshoots the flattened layout and lands on a path
+# with no .env at all. pydantic does not error on a missing env_file — every
+# setting silently falls back to its default, DB_PASSWORD becomes "", and the
+# first query fails with "Invalid user or password", which looks like a
+# credentials problem rather than a path problem.
+def _find_env_file() -> Path:
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / ".env"
+        if candidate.is_file():
+            return candidate
+    # Nothing found: keep the dev-layout path so the error message names a
+    # sensible location instead of the filesystem root.
+    return here.parents[2] / ".env"
+
+
+_ENV_FILE = _find_env_file()
 
 
 class Settings(BaseSettings):
@@ -26,6 +45,10 @@ class Settings(BaseSettings):
     DB_PASSWORD: str = ""
     HUB_SCHEMA: str = "hub_insight360"
     DS_SCHEMA: str = "ds_hub_syndb"
+
+    # Which ODBC driver to use. Leave empty to auto-detect whatever is installed
+    # (see app/database.py); set it only to force one specific driver.
+    DB_DRIVER: str = ""
 
     # ── LLM providers (enable ONE with true) ──────────────────────────────────
     # Keep all three configured; flip exactly one *_ENABLED to true to pick which

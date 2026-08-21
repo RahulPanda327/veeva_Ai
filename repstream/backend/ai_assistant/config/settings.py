@@ -3,13 +3,28 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# One .env for the whole project, at the repstream root — shared with the
-# RepStream backend. Absolute rather than the bare ".env", which pydantic reads
-# relative to the CURRENT WORKING DIRECTORY and so resolved differently
-# depending on which application started the process.
-#   this file: repstream/backend/ai_assistant/config/settings.py
-# parents[1] is ai_assistant, parents[2] backend, parents[3] repstream.
-_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
+# One .env for the whole project, shared with the RepStream backend. Absolute
+# rather than the bare ".env", which pydantic reads relative to the CURRENT
+# WORKING DIRECTORY and so resolved differently depending on which application
+# started the process.
+#
+# Found by walking UP to the nearest .env instead of a fixed parents[N], because
+# the folder depth differs per deployment:
+#   dev : repstream/backend/ai_assistant/config/settings.py  -> 3 levels up
+#   vm  : veeva_ai_main/ai_assistant/config/settings.py      -> 2 levels up
+# A missing env_file is not an error in pydantic — every setting silently falls
+# back to its default, which surfaces much later as an auth or connection
+# failure rather than as a missing-file error.
+def _find_env_file() -> Path:
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / ".env"
+        if candidate.is_file():
+            return candidate
+    return here.parents[3] / ".env"
+
+
+_ENV_FILE = _find_env_file()
 
 
 class AppConfig(BaseSettings):

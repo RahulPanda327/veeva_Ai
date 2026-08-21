@@ -45,10 +45,15 @@ logger = setup_logging("pgvector_store")
 try:
     from dotenv import load_dotenv
 
-    # One .env for the whole project, at the repstream root.
-    #   this file: repstream/backend/ai_assistant/db_qa/pgvector_store.py
-    # parents[1] is ai_assistant, parents[2] backend, parents[3] repstream.
-    load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=False)
+    # One .env for the whole project. Walk UP to the nearest one rather than a
+    # fixed parents[N]: the folder depth differs between the dev tree
+    # (repstream/backend/ai_assistant/db_qa/) and the flattened VM deployment
+    # (veeva_ai_main/ai_assistant/db_qa/).
+    _here = Path(__file__).resolve()
+    for _parent in _here.parents:
+        if (_parent / ".env").is_file():
+            load_dotenv(_parent / ".env", override=False)
+            break
 except Exception:  # noqa: BLE001 — a missing .env just means defaults apply
     pass
 
