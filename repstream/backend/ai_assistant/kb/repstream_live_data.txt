@@ -1,5 +1,5 @@
 ============================================================
-REPSTREAM LIVE APPLICATION DATA (captured 2026-08-21 17:58)
+REPSTREAM LIVE APPLICATION DATA (captured 2026-08-21 18:19)
 Current data from the RepStream application: HCPs, priorities, prescriptions, calls, new writers, objections and alerts.
 Each section below states which territory it covers. A section for 'all territories' is the combined total for the whole team; a section naming one territory covers only that territory.
 ============================================================
