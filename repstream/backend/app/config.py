@@ -131,6 +131,28 @@ class Settings(BaseSettings):
         "K86.0",   # Alcohol-induced chronic pancreatitis
     ]
 
+    # ── AI assistant question limit ───────────────────────────────────────────
+    # Per browser/device, over a rolling window. There is no login, so the device
+    # is identified by a uuid4 in an HttpOnly cookie rather than by IP: people
+    # sharing one Wi-Fi must not share one quota.
+    ASSISTANT_RATE_LIMIT_ENABLED: bool = True
+    ASSISTANT_RATE_LIMIT_QUESTIONS: int = 10
+    ASSISTANT_RATE_LIMIT_WINDOW_SECONDS: int = 3600
+    # Secondary ceiling keyed on client IP, to blunt cookie-clearing. Looser on
+    # purpose - a busy office behind one address must not trip it in normal use.
+    ASSISTANT_RATE_LIMIT_IP_QUESTIONS: int = 50
+    ASSISTANT_DEVICE_COOKIE_NAME: str = "rs_did"
+    ASSISTANT_COOKIE_MAX_AGE_DAYS: int = 365
+    # Browsers discard Secure cookies over plain http, which would silently break
+    # the limit on an http:// deployment. Turn on together with HTTPS.
+    ASSISTANT_COOKIE_SECURE: bool = False
+    # "lax" suits a UI on the same site. A UI on a different site needs "none",
+    # which browsers only accept alongside Secure=true.
+    ASSISTANT_COOKIE_SAMESITE: str = "lax"
+    # Only enable behind a proxy that really sets X-Forwarded-For: any client can
+    # send that header, so trusting it otherwise defeats the IP ceiling.
+    ASSISTANT_TRUST_PROXY_HEADERS: bool = False
+
     # Dev flags
     DEV_SKIP_AUTH: bool = False
     LLM_STUB_MODE: bool = False

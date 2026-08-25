@@ -67,9 +67,35 @@ class BrandMaskingMiddleware(BaseHTTPMiddleware):
         except json.JSONDecodeError:
             content_type = response.headers.get("content-type")
             headers = {"content-type": content_type} if content_type else None
-            return Response(content=body, status_code=response.status_code, headers=headers)
+            return _carry_headers(
+                Response(content=body, status_code=response.status_code, headers=headers),
+                response)
 
         masked = _mask_value(data)
         new_body = json.dumps(masked, default=str).encode("utf-8")
 
-        return Response(content=new_body, status_code=response.status_code, media_type="application/json")
+        return _carry_headers(
+            Response(content=new_body, status_code=response.status_code,
+                     media_type="application/json"),
+            response)
+
+
+def _carry_headers(new: Response, original: Response) -> Response:
+    """Copy the original response's headers onto the rebuilt one.
+
+    This middleware replaces the response object in order to rewrite the body,
+    and a fresh Response starts with only the headers it was constructed with.
+    Everything the route set was therefore dropped on the floor - most visibly
+    Set-Cookie, which made cookie-based identification silently impossible: the
+    route set the cookie, the browser never received it, and every request
+    looked like a brand-new client.
+
+    Content-Length and Content-Type are skipped because the new body has its own
+    and the old values would contradict it. raw_headers is used rather than a
+    dict so repeated headers (several Set-Cookie lines) all survive.
+    """
+    skip = (b"content-length", b"content-type")
+    for key, value in original.raw_headers:
+        if key.lower() not in skip:
+            new.raw_headers.append((key, value))
+    return new

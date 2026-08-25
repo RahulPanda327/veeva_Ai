@@ -14,9 +14,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, Field
 
+from app.services.assistant import rate_limit
 from app.services.assistant.chat_svc import chat
 
 logger = logging.getLogger(__name__)
@@ -109,12 +110,16 @@ class StandardApiResponse(BaseModel):
 
 @router.post("/ai_assistant_chat", response_model=StandardApiResponse,
              summary="Ask a question about the RepStream data")
-async def ai_assistant_chat(body: ChatRequestBody):
+async def ai_assistant_chat(body: ChatRequestBody, request: Request, response: Response):
     """Ask anything about the RepStream data — no filters, no auth, no territory.
 
     The embedded chunks carry their own scope labels, so a single question covers
     every territory. The knowledge base is refreshed at the end of a warm-up run,
     so answers reflect the most recent one.
+
+    Rate limited per browser/device (see services/assistant/rate_limit.py). The
+    `request`/`response` parameters are injected by FastAPI for the cookie and
+    client IP; neither changes the response body.
     """
     req = body.request
     question = (req.user_query or "").strip()
@@ -124,7 +129,33 @@ async def ai_assistant_chat(body: ChatRequestBody):
     # thread; otherwise mint one for this exchange.
     session_id = req.app_session_id or str(uuid.uuid4())
 
+    # Quota is checked BEFORE the model runs, so a blocked request costs nothing.
+    decision = rate_limit.check(request)
+    rate_limit.apply_cookie(response, decision)
+
+    if not decision.allowed and question:
+        logger.info("assistant chat: rate limited (%s) device=%s retry_in=%ss",
+                    decision.scope, decision.device_id[:8], decision.retry_after)
+        # Same envelope as every other response — only the fields inside differ.
+        return _envelope(
+            req, question, session_id, now, success=False,
+            answer=decision.message,
+            status=BotStatusItem(
+                status_type="application", status_code="FAILED",
+                status_level="WARNING", status_message=decision.message,
+            ),
+            details=ProcessingDetails(
+                answer_type="rate_limited", source="none",
+                matched_template="Rate Limit Exceeded",
+            ),
+        )
+
     result = chat(question)
+
+    # Count only questions that were actually answered: a blocked or empty one
+    # must not consume quota, or a retry loop would extend its own lockout.
+    if question:
+        rate_limit.record(request, decision)
 
     # Keep provenance in the log so a wrong answer can still be traced back to the
     # chunks that produced it.
@@ -143,8 +174,31 @@ async def ai_assistant_chat(body: ChatRequestBody):
             status_message="Response generated successfully",
         )
 
-    return StandardApiResponse(
+    return _envelope(
+        req, question, session_id, now,
         success=bool(question),
+        answer=result["answer"],
+        status=status,
+        details=ProcessingDetails(
+            response_time_ms=result.get("response_time_ms", 0),
+            model_name=result.get("model_name", ""),
+            token_usage=TokenUsage(**result.get("token_usage", {})),
+            answer_type=result.get("answer_type", ""),
+            sql=result.get("sql", ""),
+            source=result.get("source", ""),
+            confidence=result.get("confidence", 0),
+            matched_template=result.get("matched_template", ""),
+        ),
+    )
+
+
+def _envelope(req: ChatRequestPayload, question: str, session_id: str, now: str, *,
+              success: bool, answer: str, status: BotStatusItem,
+              details: ProcessingDetails) -> StandardApiResponse:
+    """Build the response. One builder for every outcome — answered, empty and
+    rate-limited — so a new branch cannot drift from the agreed envelope."""
+    return StandardApiResponse(
+        success=success,
         response=ResponseBody(
             message_id=str(uuid.uuid4()),
             message_index=1,
@@ -155,22 +209,13 @@ async def ai_assistant_chat(body: ChatRequestBody):
             user_id=req.user_id or "",
             input_query=question,
             # Always text: this assistant returns prose, never a table or chart.
-            output_query=OutputQuery(response_type="text", answer=result["answer"],
+            output_query=OutputQuery(response_type="text", answer=answer,
                                      data=[], link=None),
             bot_status=[status],
             user_action_status=req.user_action_status,
             created_at=now,
             updated_at=now,
-            processing_details=ProcessingDetails(
-                response_time_ms=result.get("response_time_ms", 0),
-                model_name=result.get("model_name", ""),
-                token_usage=TokenUsage(**result.get("token_usage", {})),
-                answer_type=result.get("answer_type", ""),
-                sql=result.get("sql", ""),
-                source=result.get("source", ""),
-                confidence=result.get("confidence", 0),
-                matched_template=result.get("matched_template", ""),
-            ),
+            processing_details=details,
             feedback=Feedback(),
         ),
     )

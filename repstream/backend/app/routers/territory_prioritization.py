@@ -323,11 +323,14 @@ async def get_territory_summary(
     ranked, scope_label = _ranked_for_selection(db, rep.territory_id, today, sel)
     (yr1, q1), _ = get_current_and_prior_quarter(today)
     period  = _quarter_label(yr1, q1)
-    summary = build_territory_summary(ranked, scope_label, scope_label, period)
-    # total_hcps reflects what the UI actually renders: HIGH/MEDIUM in full + the
-    # capped LOW sample (same trimming /hcp-list applies). The tier counts stay the
-    # true full totals.
-    summary["total_hcps"] = len(_cap_low_priority(ranked, scope_label))
+    # Every tile is computed from the SAME capped list /hcp-list returns, so the
+    # numbers add up: high + medium + low == total_hcps. Previously the counts
+    # came from the full list while total_hcps was overridden with the capped
+    # length, which showed total 68 beside 7 + 11 + 982.
+    # weekly_target is unaffected: the cap only trims LOW, so the HIGH count it
+    # derives from is identical either way.
+    summary = build_territory_summary(_cap_low_priority(ranked, scope_label),
+                                      scope_label, scope_label, period)
     summary["last_refresh"] = datetime.now(timezone.utc).strftime("%b %d, %Y")
     summary["filters"] = get_org_filters(db, sf)
     return TerritorySummary(**summary)

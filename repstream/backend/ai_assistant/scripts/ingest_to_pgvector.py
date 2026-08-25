@@ -1,26 +1,44 @@
 """
-Ingest knowledge base content into pgvector for scenario_2 semantic fallback.
+Embed everything in kb/ into the vector store.
 
-Three sources are ingested:
-  1. kb/CONTEXT_file.txt                   — chunked by === section dividers
-                                             (source = 'context_file')
-  2. kb/kb_chatbot_questions_updated.json  — one row per question
-                                             (source = 'kb_question')
-  3. kb/business_logic.txt                 — chunked by section headers
-                                             (source = 'business_logic')
+kb/ IS THE INPUT LIST
+    Every file in kb/ (including sub-folders) is discovered and embedded. There
+    is no list of filenames to maintain here: drop a file in, re-run, it is
+    indexed; delete one, re-run, its rows are removed. Adding a document used to
+    mean editing this script too, and the two drifted - three markdown docs were
+    listed here long after they had been replaced on disk, so the replacement
+    sat in kb/ unembedded while the script reported the old names as "not found"
+    every run.
 
-Run once to populate, then re-run any time the KB files change:
+    The store's own files live in ../embeddings/, NOT in kb/, precisely so this
+    scan cannot pick up its own output and embed it.
 
-    cd Datastream-Chatbot
+HOW A FILE IS CHUNKED  (by extension - see _chunk_file)
+    .md .markdown   split on '## ' headings, H1 title carried into every chunk
+    .txt            split on '=====' dividers; falls back to header-detection
+                    for files that use neither
+    .json           greetings (objects with triggers/responses) or Q&A entries,
+                    detected from the content rather than the filename
+
+    A file with any other extension is skipped and reported as such, so an
+    unexpected .pdf or .xlsx in kb/ is visible in the summary instead of
+    silently contributing nothing.
+
+Run it any time the KB changes:
+
+    cd ai_assistant
     python -m scripts.ingest_to_pgvector
 
 Or with a direct path:
-    python Datastream-Chatbot/scripts/ingest_to_pgvector.py
+    python ai_assistant/scripts/ingest_to_pgvector.py
+
+Set INGEST_VERBOSE=1 for a line per chunk instead of a line per file.
 """
 from __future__ import annotations
 
 import contextlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -31,33 +49,24 @@ sys.path.insert(0, str(ROOT))
 
 from db_qa.vector_store import get_vector_store, store_label  # noqa: E402
 
-KB_DIR              = ROOT / "kb"
-CONTEXT_FILE        = KB_DIR / "updated_context_file.txt"
-QUESTIONS_FILE      = KB_DIR / "kb_chatbot_questions_updated.json"
-BUSINESS_LOGIC_FILE = KB_DIR / "business_logic.txt"
-# Written by the RepStream warm-up — the live application data (HCP priorities,
-# alerts, objections, new writers). Uses the same === dividers as the context file.
-REPSTREAM_LIVE_FILE = KB_DIR / "repstream_live_data.txt"
+KB_DIR = ROOT / "kb"
 
-# Curated greeting rules. Answered by exact trigger match in chat_svc BEFORE any
-# retrieval runs, so embedding them changes nothing for "hi"/"thanks".
-GREETINGS_FILE = KB_DIR / "kb_greetings.json"
+# Extensions this script knows how to turn into chunks. Anything else found in
+# kb/ is listed in the summary as skipped rather than passed over in silence -
+# a .docx dropped in by mistake should be visible, not invisible.
+_SUPPORTED_SUFFIXES = {".md", ".markdown", ".txt", ".json"}
 
-# Hand-written markdown context describing what the live JSON data MEANS: how the
-# module works, what each field is, and where the data is known to be wrong. The
-# live data file says a territory has 68 HCPs; these say what an HCP, a tier and a
-# priority score actually are, so the model can interpret rather than just recite.
-#   (source name, path)
-MARKDOWN_DOCS = [
-    ("system_instructions", KB_DIR / "00_SYSTEM_INSTRUCTIONS.md"),
-    ("module_knowledge",    KB_DIR / "10_KNOWLEDGE_territory_prioritization.md"),
-    ("data_quality",        KB_DIR / "90_DATA_QUALITY_devdocs.md"),
-]
+# Never treated as input, even if an old copy is still sitting in kb/: these are
+# the store's own output (it now writes to ../embeddings/), and editor/OS litter.
+_IGNORED_NAMES = {"embeddings.npz", "embeddings_meta.json", ".ds_store", "thumbs.db"}
+_IGNORED_SUFFIXES = {".tmp", ".bak", ".swp"}
 
-# Sources whose input file no longer exists. Their rows are cleared rather than
-# left behind: a deleted KB file whose embeddings survive keeps answering from
-# content nobody can see any more.
-_RETIRED_SOURCES = ("context_file", "kb_question", "business_logic")
+# Sources that predate filename-derived naming. Cleared on every run so their
+# rows cannot outlive the files they came from. Only needed for backends that
+# cannot enumerate their own sources (pgvector); the local store reports them
+# via sources() and stale rows are dropped automatically.
+_RETIRED_SOURCES = ("context_file", "kb_question", "business_logic",
+                    "system_instructions", "module_knowledge", "data_quality")
 
 # Lines that are nothing but '=' characters (section dividers)
 _DIVIDER = re.compile(r"^={10,}\s*$", re.MULTILINE)
@@ -177,7 +186,7 @@ def chunk_markdown_file(path: Path, source: str) -> list[dict]:
     return chunks
 
 
-def load_greetings(path: Path) -> list[dict]:
+def load_greetings(data) -> list[dict]:
     """One chunk per greeting rule.
 
     NOTE: chat_svc answers greetings by exact trigger match BEFORE searching, so
@@ -186,8 +195,11 @@ def load_greetings(path: Path) -> list[dict]:
     exact match ("hey there, good morning"). The trade is a little retrieval
     noise: a short vague question can now match a greeting chunk instead of real
     data. If that shows up, drop this source rather than lowering top_k.
+
+    Takes already-parsed JSON rather than a path: the caller has to read and
+    decode the file anyway to work out whether it holds greetings or Q&A pairs,
+    and parsing the same file twice invites the two reads to disagree.
     """
-    data = json.loads(path.read_text(encoding="utf-8"))
     rules = data if isinstance(data, list) else []
     chunks: list[dict] = []
     for i, rule in enumerate(rules, 1):
@@ -254,27 +266,26 @@ def chunk_context_file(path: Path) -> list[dict]:
     return chunks
 
 
-def load_kb_questions(path: Path) -> list[dict]:
+def load_kb_questions(data) -> list[dict]:
     """
-    Load every entry from kb_chatbot_questions_updated.json.
+    Load every Q&A entry from a KB questions JSON file.
     Combines title + question + description + module into a single content string
     for richer embedding coverage.
     Returns a list of dicts with keys: chunk_id, title, content, metadata.
     """
-    text = path.read_text(encoding="utf-8").strip()
-    # raw_decode stops at the first valid JSON object — handles files with
-    # extra content appended after the main object (e.g. Module_Details block)
-    data, _ = json.JSONDecoder().raw_decode(text)
-
     # Unwrap envelope: {"query details": [...]} → [...]
     if isinstance(data, dict):
         for val in data.values():
             if isinstance(val, list):
                 data = val
                 break
+    if not isinstance(data, list):
+        return []
 
     items: list[dict] = []
     for q in data:
+        if not isinstance(q, dict):
+            continue                      # a bare string or number in the list
         qvar        = q.get("Query_variable", "")
         title       = q.get("title", "")
         question    = q.get("questions", "")
@@ -353,7 +364,136 @@ def chunk_business_logic_file(path: Path) -> list[dict]:
     return chunks
 
 
+# ── Discovery ─────────────────────────────────────────────────────────────────────
+
+def discover_kb_files() -> list[Path]:
+    """Every candidate input file in kb/, sorted, sub-folders included.
+
+    Sorted so the row order in the store is reproducible across runs and across
+    machines - iteration order off the filesystem is not, and an unstable order
+    makes two ingests of identical content produce diffs that look like real
+    changes.
+    """
+    if not KB_DIR.is_dir():
+        return []
+    files = [
+        p for p in KB_DIR.rglob("*")
+        if p.is_file()
+        and not p.name.startswith(".")
+        and p.name.lower() not in _IGNORED_NAMES
+        and p.suffix.lower() not in _IGNORED_SUFFIXES
+    ]
+    return sorted(files, key=lambda p: str(p.relative_to(KB_DIR)).lower())
+
+
+def source_name(path: Path) -> str:
+    """Stable source id derived from the file's path relative to kb/.
+
+    The path, not just the stem, so kb/a/notes.md and kb/b/notes.md stay
+    distinct instead of silently clearing each other's rows mid-run.
+    """
+    rel = path.relative_to(KB_DIR).with_suffix("")
+    slug = re.sub(r"[^a-z0-9]+", "_", str(rel).lower()).strip("_")
+    return slug or "kb_file"
+
+
+def _looks_like_greetings(data) -> bool:
+    """Greeting rules are a list of objects carrying triggers and responses.
+
+    Detected from the content rather than the filename so a renamed file keeps
+    being chunked the right way - the shape is what actually determines which
+    loader can read it.
+    """
+    if not isinstance(data, list):
+        return False
+    return any(isinstance(r, dict) and "triggers" in r and "responses" in r
+               for r in data[:5])
+
+
+def _chunk_file(path: Path, source: str) -> tuple[list[dict], str]:
+    """Chunk one KB file. Returns (chunks, status).
+
+    status is "embedded" when the file was understood, or a short reason when it
+    was not - which is what lands in the summary table.
+    """
+    suffix = path.suffix.lower()
+
+    if suffix in (".md", ".markdown"):
+        return chunk_markdown_file(path, source), "embedded"
+
+    if suffix == ".txt":
+        text = path.read_text(encoding="utf-8")
+        # '=====' dividers are the live-export format. A .txt without them is
+        # more likely prose with plain title lines, which the header-based
+        # chunker handles far better than one 2000-char slice at a time.
+        chunks = (chunk_context_file(path) if _DIVIDER.search(text)
+                  else chunk_business_logic_file(path))
+        return chunks, "embedded"
+
+    if suffix == ".json":
+        text = path.read_text(encoding="utf-8").strip()
+        try:
+            # raw_decode stops at the first valid JSON value — handles files with
+            # extra content appended after the main object.
+            data, _ = json.JSONDecoder().raw_decode(text)
+        except ValueError as exc:
+            return [], f"invalid JSON ({exc.args[0][:40]})"
+        if _looks_like_greetings(data):
+            return load_greetings(data), "embedded"
+        return load_kb_questions(data), "embedded"
+
+    return [], f"unsupported {suffix or 'file'}"
+
+
+def _prefixed(chunk_id: str, source: str) -> str:
+    """Namespace a chunk id under its source.
+
+    The per-format chunkers number from 1 within their own file, so without this
+    two files would both produce 'context_section_1' and the ids would no longer
+    identify anything. Ids that already lead with the source are left alone.
+    """
+    cid = str(chunk_id or "").strip()
+    if not cid:
+        return source
+    return cid if cid.startswith(source) else f"{source}__{cid}"
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────────
+
+# Per-file outcome, printed as a summary block at the very end.
+#   (filename, source, chunks, status)
+_SUMMARY: list[tuple[str, str, int, str]] = []
+
+# Per-chunk lines are useful when debugging a single file and pure noise
+# otherwise: 138 of them bury everything else. Off unless INGEST_VERBOSE is set.
+_VERBOSE = os.getenv("INGEST_VERBOSE", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _done(path_name: str, source: str, count: int, status: str = "embedded") -> None:
+    """Record one file's outcome and print its completion line as it happens."""
+    _SUMMARY.append((path_name, source, count, status))
+    mark = "OK  " if status == "embedded" else "SKIP"
+    print(f"  [{mark}] {path_name} -> {source}: {count} chunk(s) {status}")
+
+
+def _print_summary(store) -> None:
+    """Compact per-file table, printed LAST.
+
+    warm_cache.py logs only the final 12 lines of this script's output, so a
+    summary anywhere else scrolls away and the run looks like it only touched
+    whichever file happened to be ingested last. Keeping this short enough to
+    survive that tail is the whole point.
+    """
+    print("\n" + "=" * 62)
+    print("EMBEDDING SUMMARY")
+    for name, source, count, status in _SUMMARY:
+        mark = "OK  " if status == "embedded" else "SKIP"
+        print(f"  [{mark}] {name:<44} {count:>4}")
+    embedded = [s for s in _SUMMARY if s[3] == "embedded"]
+    print(f"  {len(embedded)} file(s) embedded, {len(_SUMMARY) - len(embedded)} skipped "
+          f"-> {store.count()} rows total")
+    print("=" * 62)
+
 
 def main() -> None:
     store = get_vector_store()
@@ -371,152 +511,84 @@ def main() -> None:
     # Printed AFTER the context exits, i.e. after the single write has actually
     # landed. Reporting success before the flush is how a failed write ends up
     # looking like a completed ingest.
-    print(f"\nIngestion complete. Total rows in {store_label()}: {store.count()}")
+    _print_summary(store)
 
 
-def _ingest_all(store) -> None:
+def _ingest_all(store) -> int:
+    """Embed every file kb/ currently holds, then drop anything it no longer does."""
+    files = discover_kb_files()
+    if not files:
+        print(f"  WARNING: no files found in {KB_DIR}")
+        return store.count()
 
-    # ── Markdown context docs ────────────────────────────────────────────────────
-    # Ingested first so they are the oldest rows: ordering does not affect search,
-    # but it keeps the console output readable when something goes wrong.
-    for source, path in MARKDOWN_DOCS:
-        print(f"\nReading {path.name} ...")
-        if not path.exists():
-            print(f"  WARNING: {path} not found — skipping")
-            store.clear_source(source)   # nothing to ingest; drop any stale rows
+    print(f"Found {len(files)} file(s) in {KB_DIR.name}/")
+
+    seen: set[str] = set()
+    for path in files:
+        rel = str(path.relative_to(KB_DIR))
+        source = source_name(path)
+        seen.add(source)
+        print(f"\nReading {rel} ...")
+
+        try:
+            chunks, status = _chunk_file(path, source)
+        except Exception as exc:  # noqa: BLE001
+            # One unreadable file must not abandon the other twenty. It is
+            # reported in the summary and its old rows are left untouched, which
+            # is better than clearing them and ending up with neither.
+            print(f"  ERROR: {exc}")
+            _done(rel, source, 0, f"failed ({type(exc).__name__})")
             continue
-        md_chunks = chunk_markdown_file(path, source)
-        print(f"  {len(md_chunks)} section(s) extracted")
-        print(f"  Clearing old '{source}' rows ...")
+
+        if status != "embedded":
+            print(f"  SKIP: {status}")
+            _done(rel, source, 0, status)
+            continue
+
+        # Cleared only once the file has parsed, so a chunker raising halfway
+        # cannot leave the source with nothing in it.
         store.clear_source(source)
-        for i, chunk in enumerate(md_chunks, 1):
+        for i, chunk in enumerate(chunks, 1):
             store.store(
                 source=source,
-                chunk_id=chunk["chunk_id"],
+                chunk_id=_prefixed(chunk["chunk_id"], source),
                 title=chunk["title"],
                 content=chunk["content"],
-                metadata={"file": path.name},
+                # Every row records the file it came from, so a wrong answer can
+                # be traced back to a document rather than just a source slug.
+                metadata={**chunk.get("metadata", {}), "file": rel},
             )
-            print(f"    [{i}/{len(md_chunks)}] {chunk['chunk_id']} — {chunk['title'][:70]}")
+            if _VERBOSE:
+                print(f"    [{i}/{len(chunks)}] {chunk['chunk_id']} — {chunk['title'][:65]}")
+        _done(rel, source, len(chunks))
 
-    # ── Greetings ────────────────────────────────────────────────────────────────
-    print(f"\nReading {GREETINGS_FILE.name} ...")
-    if not GREETINGS_FILE.exists():
-        print(f"  WARNING: {GREETINGS_FILE} not found — skipping")
-        store.clear_source("greetings")
-    else:
-        greet_chunks = load_greetings(GREETINGS_FILE)
-        print(f"  {len(greet_chunks)} greeting rule(s) loaded")
-        print("  Clearing old 'greetings' rows ...")
-        store.clear_source("greetings")
-        for i, chunk in enumerate(greet_chunks, 1):
-            store.store(
-                source="greetings",
-                chunk_id=chunk["chunk_id"],
-                title=chunk["title"],
-                content=chunk["content"],
-                metadata={"file": GREETINGS_FILE.name},
-            )
-        print(f"    stored {len(greet_chunks)} greeting chunk(s)")
-
-    # ── Retired sources ──────────────────────────────────────────────────────────
-    # These KB files were removed from the project. Their embeddings would
-    # otherwise survive every re-ingest, because a source is only cleared inside
-    # the branch that re-reads its file.
-    for source in _RETIRED_SOURCES:
-        store.clear_source(source)
-
-    # ── Context file ─────────────────────────────────────────────────────────────
-    print(f"\nReading {CONTEXT_FILE.name} ...")
-    if not CONTEXT_FILE.exists():
-        print(f"  WARNING: {CONTEXT_FILE} not found — skipping context file ingestion")
-    else:
-        context_chunks = chunk_context_file(CONTEXT_FILE)
-        print(f"  {len(context_chunks)} sections extracted")
-        print("  Clearing old 'context_file' rows ...")
-        store.clear_source("context_file")
-        for i, chunk in enumerate(context_chunks, 1):
-            store.store(
-                source="context_file",
-                chunk_id=chunk["chunk_id"],
-                title=chunk["title"],
-                content=chunk["content"],
-            )
-            print(
-                f"  [{i:02d}/{len(context_chunks):02d}] "
-                f"{chunk['chunk_id']} — {chunk['title'][:65]}"
-            )
-
-    # ── KB questions ─────────────────────────────────────────────────────────────
-    print(f"\nReading {QUESTIONS_FILE.name} ...")
-    if not QUESTIONS_FILE.exists():
-        print(f"  WARNING: {QUESTIONS_FILE} not found — skipping KB question ingestion")
-    else:
-        kb_items = load_kb_questions(QUESTIONS_FILE)
-        print(f"  {len(kb_items)} questions loaded")
-        print("  Clearing old 'kb_question' rows ...")
-        store.clear_source("kb_question")
-        for i, item in enumerate(kb_items, 1):
-            store.store(
-                source="kb_question",
-                chunk_id=item["chunk_id"],
-                title=item["title"],
-                content=item["content"],
-                metadata=item["metadata"],
-            )
-            print(
-                f"  [{i:02d}/{len(kb_items):02d}] "
-                f"{item['chunk_id']} — {item['title']}"
-            )
-
-    # ── Business logic file ───────────────────────────────────────────────────────
-    print(f"\nReading {BUSINESS_LOGIC_FILE.name} ...")
-    if not BUSINESS_LOGIC_FILE.exists():
-        print(f"  WARNING: {BUSINESS_LOGIC_FILE} not found — skipping business logic ingestion")
-    else:
-        bl_chunks = chunk_business_logic_file(BUSINESS_LOGIC_FILE)
-        print(f"  {len(bl_chunks)} sections extracted")
-        print("  Clearing old 'business_logic' rows ...")
-        store.clear_source("business_logic")
-        for i, chunk in enumerate(bl_chunks, 1):
-            store.store(
-                source="business_logic",
-                chunk_id=chunk["chunk_id"],
-                title=chunk["title"],
-                content=chunk["content"],
-            )
-            print(
-                f"  [{i:02d}/{len(bl_chunks):02d}] "
-                f"{chunk['chunk_id']} — {chunk['title'][:65]}"
-            )
-
-    # ── RepStream live data ───────────────────────────────────────────────────────
-    # Regenerated by the RepStream warm-up (scripts/export_live_to_kb.py), so this
-    # is the only source whose content changes between runs. Cleared and re-stored
-    # each time rather than merged: stale HCP counts and alert dates would
-    # otherwise sit alongside current ones and the retriever could return either.
-    print(f"\nReading {REPSTREAM_LIVE_FILE.name} ...")
-    if not REPSTREAM_LIVE_FILE.exists():
-        print(f"  WARNING: {REPSTREAM_LIVE_FILE} not found — skipping live data ingestion")
-        print("  Run 'python scripts/export_live_to_kb.py' in the RepStream backend first.")
-    else:
-        live_chunks = chunk_context_file(REPSTREAM_LIVE_FILE)   # same === divider format
-        print(f"  {len(live_chunks)} sections extracted")
-        print("  Clearing old 'repstream_live' rows ...")
-        store.clear_source("repstream_live")
-        for i, chunk in enumerate(live_chunks, 1):
-            store.store(
-                source="repstream_live",
-                chunk_id=chunk["chunk_id"].replace("context_section", "repstream_live"),
-                title=chunk["title"],
-                content=chunk["content"],
-            )
-            print(
-                f"  [{i:02d}/{len(live_chunks):02d}] "
-                f"{chunk['chunk_id']} — {chunk['title'][:65]}"
-            )
-
+    _clear_stale(store, seen)
     return store.count()
+
+
+def _clear_stale(store, seen: set[str]) -> None:
+    """Drop rows for sources that no longer have a file in kb/.
+
+    Deleting a KB file used to leave its embeddings behind for good - a source
+    was only ever cleared inside the branch that re-read its file, so a file that
+    was gone had no branch to run. The assistant went on answering from documents
+    that no longer existed.
+
+    Backends that can enumerate their own sources (the local store) get this
+    exactly. pgvector cannot, so it falls back to the hardcoded list of names
+    known to have been retired.
+    """
+    lister = getattr(store, "sources", None)
+    if lister is None:
+        for source in _RETIRED_SOURCES:
+            store.clear_source(source)
+        return
+
+    stale = sorted(set(lister()) - seen)
+    for source in stale:
+        store.clear_source(source)
+    if stale:
+        print(f"\nRemoved {len(stale)} source(s) with no file in kb/: {', '.join(stale)}")
 
 
 if __name__ == "__main__":

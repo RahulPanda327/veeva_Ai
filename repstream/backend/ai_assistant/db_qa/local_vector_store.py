@@ -23,12 +23,17 @@ WHEN TO GO BACK TO PGVECTOR
     file replace. At that point switch VECTOR_STORE back to pgvector.
 
 STORAGE
-    kb/embeddings.npz        float32 matrix, one normalised row per chunk
-    kb/embeddings_meta.json  the rows themselves (source, title, content, ...)
+    embeddings/embeddings.npz        float32 matrix + metadata, one row per chunk
+    embeddings/embeddings_meta.json  human-readable copy of the rows
 
-    Two files rather than one so the metadata stays greppable and reviewable in
-    a diff; the matrix is opaque either way. Vectors are L2-normalised on write,
-    which makes cosine similarity a plain dot product at query time.
+    Deliberately OUTSIDE kb/. kb/ is now the ingest's input directory - every
+    file in it is discovered and embedded - so leaving the store's own output
+    there would feed it back into itself on the next run. Keeping input and
+    output in separate directories makes that impossible rather than merely
+    unlikely.
+
+    Vectors are L2-normalised on write, which makes cosine similarity a plain
+    dot product at query time.
 """
 from __future__ import annotations
 
@@ -49,10 +54,10 @@ logger = setup_logging("local_vector_store")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIMENSION", "384"))
 
-# Default location: kb/ inside this package. Deliberately NOT kb/vectors/, which
-# .gitignore excludes - the whole point is that these files are committed and
-# ship with the project.
-_DEFAULT_DIR = Path(__file__).resolve().parents[1] / "kb"
+# Default location: embeddings/ inside this package - NOT kb/, which the ingest
+# now scans wholesale for input files. Committed and shipped with the project, so
+# a fresh checkout can answer questions without re-running the ingest first.
+_DEFAULT_DIR = Path(__file__).resolve().parents[1] / "embeddings"
 STORE_DIR = Path(os.getenv("VECTOR_STORE_DIR", str(_DEFAULT_DIR)))
 VECTORS_FILE = STORE_DIR / "embeddings.npz"
 META_FILE = STORE_DIR / "embeddings_meta.json"
@@ -286,6 +291,18 @@ class LocalVectorStore:
     def count(self) -> int:
         self._load()
         return len(self._rows)
+
+    def sources(self) -> list[str]:
+        """Every distinct source currently held.
+
+        The ingest uses this to drop sources whose file has been deleted from
+        kb/. Without it, removing a KB file leaves its embeddings in the store
+        for good, and the assistant keeps answering from a document nobody can
+        open any more - which is exactly the bug the old hardcoded
+        _RETIRED_SOURCES list existed to paper over, one filename at a time.
+        """
+        self._load()
+        return sorted({str(r.get("source", "")) for r in self._rows} - {""})
 
     def close(self) -> None:
         """Nothing to release — every mutation is already flushed."""

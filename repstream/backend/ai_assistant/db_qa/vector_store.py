@@ -1,6 +1,6 @@
 """Which vector store backs the assistant — one import site for both options.
 
-    VECTOR_STORE=local      (default) embeddings in kb/embeddings.npz, no server
+    VECTOR_STORE=local      (default) embeddings in embeddings/embeddings.npz, no server
     VECTOR_STORE=pgvector             embeddings in PostgreSQL + pgvector
 
 Both classes expose the same methods (store / clear_source / search / count /
