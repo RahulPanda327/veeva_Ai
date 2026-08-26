@@ -1,5 +1,7 @@
 """Module 1 — Territory Prioritization API endpoints."""
+import json
 import logging
+import os
 import threading
 from datetime import date, datetime, timezone
 from typing import List, Optional
@@ -39,9 +41,14 @@ from app.services.territory_prioritization.score_reason import (
     generate_score_reasons_for_list,
     warm_score_reasons,
 )
+from app.services.territory_prioritization.module_kpis import (
+    build_new_writer_kpis,
+    build_objection_kpis,
+)
 from app.services.territory_prioritization.weekly_target import build_territory_summary
 from app.utils.auth import RepIdentity, get_current_rep
 from app.utils.cache import cache_get, cache_set, territory_cache_key
+from app.utils.cache_paths import cache_file
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/territory", tags=["Territory Prioritization"])
@@ -63,6 +70,43 @@ _warm_lock = threading.Lock()
 # during warm-up) and held until restart, matching the permanent response cache.
 _ranked_mem: dict[str, List[dict]] = {}
 _ranked_mem_lock = threading.Lock()
+
+# The uncapped new-writer population behind the summary's Module 2 KPI tiles.
+# Persisted to disk rather than kept only in memory like _ranked_mem above: it
+# costs batched Synapse queries over every HCP in scope (minutes on a wide
+# selection), and /territory/summary is deliberately not response-cached, so an
+# in-memory-only copy meant paying that cost again after every restart — which is
+# exactly the "why is it regenerating?" symptom this endpoint is supposed to
+# avoid. Same disk-backed pattern as the New Writer candidate cache.
+_POPULATION_CACHE_FILE = cache_file("new_writer_population_cache.json")
+_population_cache: dict[str, dict] = {}
+_population_lock = threading.Lock()
+
+
+def _load_population_cache() -> None:
+    try:
+        with open(_POPULATION_CACHE_FILE, encoding="utf-8") as f:
+            _population_cache.update(json.load(f))
+        logger.info("Loaded New Writer population cache for %d scope(s) from %s",
+                    len(_population_cache), _POPULATION_CACHE_FILE.name)
+    except FileNotFoundError:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not load New Writer population cache (%s).", exc)
+
+
+def _save_population_cache() -> None:
+    try:
+        with _population_lock:
+            tmp = _POPULATION_CACHE_FILE.with_suffix(".json.tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(_population_cache, f, default=str)
+            os.replace(tmp, _POPULATION_CACHE_FILE)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not save New Writer population cache (%s).", exc)
+
+
+_load_population_cache()
 
 
 # Only the top-ranked HCPs per territory are ever shown (the list is capped to
@@ -333,7 +377,115 @@ async def get_territory_summary(
                                       scope_label, scope_label, period)
     summary["last_refresh"] = datetime.now(timezone.utc).strftime("%b %d, %Y")
     summary["filters"] = get_org_filters(db, sf)
+    summary["new_writer_id"] = build_new_writer_kpis(_new_writer_population(db, rep, sel))
+    summary["objection_handler"] = build_objection_kpis(_objection_rows(db, rep, sel))
     return TerritorySummary(**summary)
+
+
+def _new_writer_population(db: Session, rep: RepIdentity, sel: FilterSelection) -> List[dict]:
+    """Every new-writer candidate in scope — UNCAPPED, for the KPI tiles.
+
+    Deliberately NOT what /new-writers/candidates returns. That endpoint caps to
+    the top 10 by in-class volume for its card UI, which is right for a shortlist
+    and wrong for a count: every tile read <=10 whatever the territory, and
+    filtering to one territory reported MORE in-class prescribers than the whole
+    org, because the capped and unfiltered paths draw from different populations
+    entirely.
+
+    Peer enrichment is two DB queries and no LLM call (match_scoring reads
+    insight360_peer_match_dul, falling back to a rule-based nearest-writer
+    lookup), so running it over the full population is affordable here. The
+    Ollama warm-approach chain is not run — nothing on this endpoint displays it.
+
+    Failures return an empty list. These are supplementary tiles on someone
+    else's endpoint; a module that is down must not take the territory summary
+    with it.
+    """
+    try:
+        from app.services.filters_service import hcps_for_territories       # noqa: PLC0415
+        from app.services.new_writer_id.match_scoring import enrich_with_peer_match  # noqa: PLC0415
+        from app.services.new_writer_id.non_writer_detection import (       # noqa: PLC0415
+            count_brand_writers,
+            detect_new_writers_for_hcps,
+        )
+
+        sf = salesforce_of(rep.territory_id)
+        territories = resolve_territories(db, sf, sel) or []
+        if not territories:
+            # An empty selection means "everything", not "nothing" — and
+            # hcps_for_territories(None) returns an empty set rather than the whole
+            # population, so passing it straight through made every ALL/ALL tile
+            # read 0 while each individual territory reported hundreds. Fall back
+            # to every territory in the org tree, which is the same scope the
+            # ranked list and total_hcps already cover.
+            territories = _all_territory_ids(db, sf)
+            if not territories:
+                return []
+
+        scope = ",".join(sorted(territories))
+        cache_key = territory_cache_key("new_writers:population_v1", scope)
+        cached = cache_get(cache_key)
+        if cached is not None:
+            return cached
+        with _population_lock:
+            hit = _population_cache.get(cache_key)
+        if hit is not None:
+            return hit
+
+        hcp_ids = hcps_for_territories(db, territories)
+        if not hcp_ids:
+            return []
+        (yr1, q1), _ = get_current_and_prior_quarter(date.today())
+        rows = detect_new_writers_for_hcps(db, hcp_ids, yr1, q1, cap=None)
+        if rows:
+            rows = enrich_with_peer_match(db, rows, scope)
+
+        # Carried on the payload rather than returned separately so the whole
+        # thing stays one cacheable value.
+        result = {
+            "rows": rows,
+            "hcp_total": len(hcp_ids),
+            "writers": count_brand_writers(db, hcp_ids),
+        }
+        cache_set(cache_key, result, ttl=_CACHE_TTL)
+        with _population_lock:
+            _population_cache[cache_key] = result
+        _save_population_cache()
+        return result
+    except Exception:  # noqa: BLE001
+        logger.exception("New Writer KPI tiles unavailable; reporting zeros.")
+        return {"rows": [], "hcp_total": 0, "writers": 0}
+
+
+def _all_territory_ids(db: Session, sf: str) -> List[str]:
+    """Every territory in the org tree, normalized the way resolve_territories
+    returns them — the scope an empty filter selection actually means."""
+    tree = get_org_filters(db, sf)
+    out: List[str] = []
+    seen: set[str] = set()
+    for m in (tree or {}).get("manager_id", []):
+        for e in m.get("employee_id", []):
+            for t in e.get("territory_id", []):
+                tid = normalize_territory_id(t.get("territory_id"), sf)
+                if tid and tid not in seen:
+                    seen.add(tid)
+                    out.append(tid)
+    return out
+
+
+def _objection_rows(db: Session, rep: RepIdentity, sel: FilterSelection) -> List[dict]:
+    """The Module 3 objection list for this filter — same rows /objections/list
+    returns, scoped through the same resolve_territories call. Errors degrade to
+    zeros for the reason given in _new_writer_rows."""
+    try:
+        from app.routers.objection_handler import _get_objection_list  # noqa: PLC0415
+
+        territories = resolve_territories(db, salesforce_of(rep.territory_id), sel)
+        bare = [t.split("|")[-1] for t in territories] if territories else None
+        return _get_objection_list(db, bare, None)
+    except Exception:  # noqa: BLE001
+        logger.exception("Objection KPI tiles unavailable; reporting zeros.")
+        return []
 
 
 @router.get("/hcp-list", response_model=List[HCPRankedItem])

@@ -162,6 +162,44 @@ def _query_top5_by_brand(
     return result
 
 
+_BRAND_WRITER_COUNT_SQL = text("""
+    SELECT COUNT(*) AS writers FROM (
+        SELECT s.HCP_Durable_Id
+        FROM hub_insight360.vw_tfact_prescribersales_zenpep_reporting_dul s
+        WHERE s.HCP_Durable_Id IN :hcp_ids
+        GROUP BY s.HCP_Durable_Id
+        HAVING SUM(CASE WHEN s.Brand_Name = 'ZENPEP'
+                       THEN ISNULL(TRY_CAST(s.Total_Rx_Count AS FLOAT), 0) ELSE 0 END) > 0
+    ) w
+""").bindparams(bindparam("hcp_ids", expanding=True))
+
+
+def count_brand_writers(db: Session, hcp_ids: set) -> int:
+    """How many of these HCPs currently write the brand.
+
+    Exists so "non-writers in territory" can be counted as (territory HCPs −
+    writers). Deriving it from detect_new_writers_for_hcps() instead would be
+    wrong twice over: that query also requires positive in-class Rx, so it
+    silently excludes non-writers who prescribe nothing in the class, and it
+    would make the non-writer and in-class tiles report the identical number.
+
+    Batched for the same ~2100 bound-parameter ODBC limit as the detection query.
+    """
+    if not hcp_ids:
+        return 0
+    try:
+        engine = db.bind
+        total = 0
+        for batch in _chunks(list(hcp_ids), _HCP_ID_BATCH_SIZE):
+            df = pd.read_sql(_BRAND_WRITER_COUNT_SQL, engine, params={"hcp_ids": batch})
+            if not df.empty:
+                total += int(df.iloc[0]["writers"] or 0)
+        return total
+    except Exception:  # noqa: BLE001
+        log.exception("Brand-writer count failed.")
+        return 0
+
+
 _LIVE_DETECTION_SQL = text("""
     WITH rx_agg AS (
         SELECT
@@ -216,6 +254,7 @@ def detect_new_writers_for_hcps(
     hcp_ids: set,
     year_q1: int,
     quarter_q1: int,
+    cap: Optional[int] = _NEW_WRITER_CAP,
 ) -> List[Dict]:
     """Live per-territory new-writer detection — unlike detect_non_writers()
     (which filters the small pre-computed insight360_peer_match_dul KPI-7
@@ -245,7 +284,13 @@ def detect_new_writers_for_hcps(
             return []
 
         df = pd.concat(frames, ignore_index=True)
-        df = df.sort_values("in_class_rx_q1", ascending=False).head(_NEW_WRITER_CAP)
+        df = df.sort_values("in_class_rx_q1", ascending=False)
+        # cap=None asks for the FULL matching population rather than the display
+        # shortlist. The KPI tiles on the Territory Prioritization summary need
+        # that: counting the capped list pins every tile at <=10 no matter how
+        # large the territory, so the numbers stop moving when a filter changes.
+        if cap is not None:
+            df = df.head(cap)
         df = df.astype(object).where(df.notna(), None)
 
         rows = df.to_dict("records")

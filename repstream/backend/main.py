@@ -163,8 +163,29 @@ def _startup_tasks() -> None:
         _embed_only()
 
 
+def _log_llm_banner() -> None:
+    """State the active LLM platform, model and endpoint at startup.
+
+    Worth a line of its own because every enrichment failure downstream is
+    reported per-item ("... unavailable for AL-002"), which says nothing about
+    WHICH provider was being called. A wrong provider or a wrong base URL used to
+    be visible only as hundreds of identical item-level warnings.
+    """
+    provider = settings.LLM_PROVIDER
+    endpoint = {
+        "ollama":   settings.OLLAMA_BASE_URL,
+        "openai":   settings.OPENAI_BASE_URL or "https://api.openai.com/v1",
+        "groq":     "https://api.groq.com/openai/v1",
+        "openvino": settings.OPENVINO_BASE_URL,
+    }.get(provider, "")
+    logger.info("LLM platform: %s | model: %s | endpoint: %s%s",
+                provider.upper(), settings.LLM_MODEL, endpoint or "(default)",
+                "  [STUB MODE - no real calls]" if settings.LLM_STUB_MODE else "")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
+    _log_llm_banner()
     if _flag("REPSTREAM_WARMUP") or _flag("REPSTREAM_EMBEDDING"):
         threading.Thread(target=_startup_tasks, daemon=True,
                          name="startup-cache-refresh").start()

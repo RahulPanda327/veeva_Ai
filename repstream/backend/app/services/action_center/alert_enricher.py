@@ -21,6 +21,7 @@ from typing import Any, Dict
 from app.utils.llm_client import make_llm_client
 
 from app.config import settings
+from app.utils.llm_json import parse_llm_json
 
 log = logging.getLogger(__name__)
 
@@ -128,7 +129,7 @@ def enrich(alert, affected_hcps=None) -> dict:
         # Counter_Strategy for the other fields). Deliberately NOT cached, so this
         # self-heals — the next request retries Ollama and fills the values in as
         # soon as OpenAI is reachable again, with no restart needed.
-        log.warning("Ollama alert enrichment unavailable for %s (%s) — empty LLM fields.", alert_id, exc)
+        log.warning("LLM alert enrichment unavailable for %s (%s) — empty LLM fields.", alert_id, exc)
         return {"ai_prescribing_drift_note": "", "ai_supporting_materials": []}
 
     _CACHE[alert_id] = result
@@ -137,7 +138,7 @@ def enrich(alert, affected_hcps=None) -> dict:
 
 def _call_gpt4o(alert, affected_hcps=None) -> dict:
     client = make_llm_client()
-    log.info("Ollama enriching alert %s", alert.alert_id)
+    log.info("LLM enriching alert %s", alert.alert_id)
 
     response = client.chat.completions.create(
         model=settings.LLM_MODEL,
@@ -148,7 +149,7 @@ def _call_gpt4o(alert, affected_hcps=None) -> dict:
         response_format={"type": "json_object"},
         temperature=0.3,
     )
-    return json.loads(response.choices[0].message.content)
+    return parse_llm_json(response.choices[0].message.content)
 
 
 def _stub(alert) -> dict:

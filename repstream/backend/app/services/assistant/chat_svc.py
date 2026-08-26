@@ -1,4 +1,4 @@
-"""Chat over the RepStream data embedded in the chatbot's pgvector store.
+"""Chat over the RepStream data embedded in the assistant's vector store.
 
 The pipeline this reads from:
 
@@ -6,7 +6,7 @@ The pipeline this reads from:
              ->  scripts/export_live_to_kb.py   (renders it as sentences)
              ->  ai_assistant/kb/repstream_live_data.txt
              ->  scripts.ingest_to_pgvector     (embeds it)
-             ->  pgvector
+             ->  the configured vector store (VECTOR_STORE)
 
 A question is embedded with the same model the store was built with, the nearest
 chunks come back, and the configured LLM answers from them. No SQL is generated
@@ -161,7 +161,7 @@ def _store():
 
 def _result(answer: str, hits: Optional[List[dict]] = None, *, started: float,
             answer_type: str, matched_template: str,
-            source: str = "pgvector_llm") -> Dict[str, Any]:
+            source: str = "vector_store_llm") -> Dict[str, Any]:
     """Assemble the fields the response envelope reports under processing_details."""
     hits = hits or []
     return {
@@ -229,7 +229,7 @@ def chat(question: str, top_k: int = 6, min_score: float = 0.15) -> Dict[str, An
             "priorities, prescriptions, calls, new writers, objections and alerts "
             "from the last warm-up.",
             started=started, answer_type="no_match",
-            matched_template="No Match", source="pgvector")
+            matched_template="No Match", source="vector_store")
 
     context = "\n\n".join(
         f"[{h.get('source')}] {h.get('title') or ''}\n{h.get('content') or ''}"

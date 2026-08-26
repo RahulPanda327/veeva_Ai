@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Tuple
 
 from app.config import settings
 from app.utils.cache_paths import cache_file
+from app.utils.llm_json import parse_llm_json
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +121,7 @@ def _call_gpt4o_warm(hcp: Dict) -> Optional[Dict]:
             max_tokens=120,
             temperature=0.3,
         )
-        data = json.loads(resp.choices[0].message.content)
+        data = parse_llm_json(resp.choices[0].message.content)
         text = str(data.get("warm_approach", ""))
         if not text:
             raise ValueError("empty warm_approach in Ollama response")
@@ -128,7 +129,7 @@ def _call_gpt4o_warm(hcp: Dict) -> Optional[Dict]:
         _WARM_CACHE[key] = result
         return result
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Ollama warm approach failed for %s: %s", hcp.get("hcp_id"), exc)
+        logger.warning("LLM warm approach failed for %s: %s", hcp.get("hcp_id"), exc)
         return None   # not cached — retried on next warm cycle
 
 
@@ -248,7 +249,7 @@ def _call_gpt4o_email(hcp: Dict) -> Optional[Dict]:
             max_tokens=500,
             temperature=0.4,
         )
-        data = json.loads(resp.choices[0].message.content)
+        data = parse_llm_json(resp.choices[0].message.content)
         if not data.get("email_body"):
             raise ValueError("empty email_body in Ollama response")
         result = {
@@ -261,7 +262,7 @@ def _call_gpt4o_email(hcp: Dict) -> Optional[Dict]:
         _EMAIL_CACHE[key] = result
         return result
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Ollama approach brief failed for %s: %s", hcp.get("hcp_id"), exc)
+        logger.warning("LLM approach brief failed for %s: %s", hcp.get("hcp_id"), exc)
         return None   # not cached — retried on next warm cycle
 
 
@@ -292,7 +293,7 @@ def warm_approach_briefs(candidates: List[Dict]) -> int:
     with ThreadPoolExecutor(max_workers=_WARM_MAX_WORKERS) as pool:
         list(pool.map(_call_gpt4o_email, pending))
     _save_email_cache()
-    logger.info("Warmed %d Ollama approach briefs.", len(pending))
+    logger.info("Warmed %d LLM approach briefs.", len(pending))
     return len(pending)
 
 
@@ -335,7 +336,7 @@ def warm_approaches(candidates: List[Dict]) -> int:
                 _save_warm_cache()
                 logger.info("Warm approach progress: %d/%d", done, len(pending))
     _save_warm_cache()
-    logger.info("Warmed %d Ollama warm approaches.", len(pending))
+    logger.info("Warmed %d LLM warm approaches.", len(pending))
     return len(pending)
 
 _SYSTEM = (
@@ -429,11 +430,11 @@ def _call_gpt4o(hcp: Dict) -> Tuple[str, Optional[str]]:
             max_tokens=150,
             temperature=0.4,
         )
-        data = json.loads(resp.choices[0].message.content)
+        data = parse_llm_json(resp.choices[0].message.content)
         brief     = str(data.get("brief", ""))
         highlight = data.get("highlight")
     except Exception as exc:
-        logger.warning("Ollama approach brief failed for %s: %s", hcp.get("hcp_id"), exc)
+        logger.warning("LLM approach brief failed for %s: %s", hcp.get("hcp_id"), exc)
         brief, highlight = _rule_based_warm_approach(hcp)
 
     _BRIEF_CACHE[cache_key] = {"brief": brief, "highlight": highlight}

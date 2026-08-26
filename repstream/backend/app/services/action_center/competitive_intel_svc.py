@@ -25,6 +25,7 @@ from app.schemas.action_center import (
 )
 from app.utils.db_retry import run_with_retry
 from app.utils.llm_client import normalize_str_list
+from app.utils.llm_json import parse_llm_json
 
 log = logging.getLogger(__name__)
 
@@ -262,13 +263,13 @@ def _call_gpt4o(row: CompetitiveIntel) -> Dict[str, str]:
             response_format={"type": "json_object"},
             messages=[{"role": "user", "content": prompt}],
         )
-        result = json.loads(resp.choices[0].message.content)
+        result = parse_llm_json(resp.choices[0].message.content)
         for key in ("recommended_actions", "field_force_talking_points"):
             result[key] = normalize_str_list(result.get(key))
         _CACHE[cache_key] = result
         return result
     except Exception as exc:
-        log.warning("Ollama error for %s: %s", row.intel_id, exc)
+        log.warning("LLM error for %s: %s", row.intel_id, exc)
         result = _stub_gpt(row)
         _CACHE[cache_key] = result
         return result

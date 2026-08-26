@@ -45,6 +45,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.utils.db_retry import run_with_retry
 from app.models.hcp_awareness import HCPAwareness
+from app.utils.llm_json import parse_llm_json
 from app.schemas.action_center import (
     HCPAwarenessItem,
     HCPAwarenessResponse,
@@ -307,7 +308,7 @@ Generate the 2 fields as JSON."""
 
 def _call_gpt4o(row, latest_score, slope, risk_score, nlp_category, predicted_4w) -> dict:
     client = make_llm_client()
-    log.info("Ollama enriching HCP %s", row.hcp_id)
+    log.info("LLM enriching HCP %s", row.hcp_id)
     response = client.chat.completions.create(
         model=settings.LLM_MODEL,
         messages=[
@@ -317,7 +318,7 @@ def _call_gpt4o(row, latest_score, slope, risk_score, nlp_category, predicted_4w
         response_format={"type": "json_object"},
         temperature=0.2,
     )
-    return json.loads(response.choices[0].message.content)
+    return parse_llm_json(response.choices[0].message.content)
 
 
 def _stub(row: HCPAwareness, nlp_category: str, predicted_direction: Optional[str]) -> dict:
@@ -342,7 +343,7 @@ def _enrich(row, latest_score, slope, risk_score, nlp_category, predicted_direct
         try:
             result = _call_gpt4o(row, latest_score, slope, risk_score, nlp_category, predicted_4w)
         except Exception as exc:
-            log.warning("Ollama failed for HCP %s (%s) — falling back to stub", row.hcp_id, exc)
+            log.warning("LLM failed for HCP %s (%s) — falling back to stub", row.hcp_id, exc)
             result = _stub(row, nlp_category, predicted_direction)
     _CACHE[row.hcp_id] = result
     return result

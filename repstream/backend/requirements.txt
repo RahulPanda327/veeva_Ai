@@ -90,6 +90,11 @@ torch>=2.0.0
 matplotlib>=3.10.9             # chatbot: chart generation
 
 # ── Vector / cache / queue ────────────────────────────────────────────────────
+# The assistant's vector store: a local persistent DB, no server. Required, not
+# optional - it is the only backend that works without a PostgreSQL server, and
+# the numpy .npz store it replaced has been removed. Pulls in onnxruntime and
+# the opentelemetry/kubernetes client stack, ~200 MB installed.
+chromadb>=1.5.9
 pinecone>=5.4.2
 redis>=5.2.1
 celery>=5.4.0

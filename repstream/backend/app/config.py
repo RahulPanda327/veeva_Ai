@@ -51,12 +51,13 @@ class Settings(BaseSettings):
     DB_DRIVER: str = ""
 
     # ── LLM providers (enable ONE with true) ──────────────────────────────────
-    # Keep all three configured; flip exactly one *_ENABLED to true to pick which
+    # Keep all four configured; flip exactly one *_ENABLED to true to pick which
     # one runs. If several are true, the first in this order wins: ollama → openai
-    # → groq. Each provider keeps its OWN model name + credentials.
+    # → groq → openvino. Each provider keeps its OWN model name + credentials.
     OLLAMA_ENABLED: bool = True
     OPENAI_ENABLED: bool = False
     GROQ_ENABLED: bool = False
+    OPENVINO_ENABLED: bool = False
 
     # Ollama (local)
     OLLAMA_MODEL: str = "mistral:latest"
@@ -71,6 +72,16 @@ class Settings(BaseSettings):
     GROQ_MODEL: str = "llama-3.1-8b-instant"
     GROQ_API_KEY: str = ""
 
+    # OpenVINO — reached over HTTP, never loaded in-process. OpenVINO Model
+    # Server speaks the OpenAI chat-completions protocol, so this provider is the
+    # OpenAI client pointed at a different host: no openvino/optimum-intel
+    # package, no model conversion, nothing installed on this machine.
+    OPENVINO_MODEL: str = ""
+    OPENVINO_API_KEY: str = ""
+    # Must include the version path the server exposes — OVMS serves
+    # /v3/chat/completions, so the base URL ends in /v3 (not /v1 as with OpenAI).
+    OPENVINO_BASE_URL: str = ""
+
     # Shared knobs
     LLM_TIMEOUT: int = 120
     LLM_MAX_RETRIES: int = 3
@@ -79,9 +90,13 @@ class Settings(BaseSettings):
         """Resolve (provider, model) from the *_ENABLED flags. First enabled in
         priority order wins; falls back to Ollama if none are enabled."""
         for provider, enabled, model in (
-            ("ollama", self.OLLAMA_ENABLED, self.OLLAMA_MODEL),
-            ("openai", self.OPENAI_ENABLED, self.OPENAI_MODEL),
-            ("groq",   self.GROQ_ENABLED,   self.GROQ_MODEL),
+            ("ollama",   self.OLLAMA_ENABLED,   self.OLLAMA_MODEL),
+            ("openai",   self.OPENAI_ENABLED,   self.OPENAI_MODEL),
+            ("groq",     self.GROQ_ENABLED,     self.GROQ_MODEL),
+            # Appended rather than inserted: order decides only which wins when
+            # several flags are true, and adding it anywhere earlier would change
+            # what an existing .env with two flags on resolves to.
+            ("openvino", self.OPENVINO_ENABLED, self.OPENVINO_MODEL),
         ):
             if enabled:
                 return provider, model

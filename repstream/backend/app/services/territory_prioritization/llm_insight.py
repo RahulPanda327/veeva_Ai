@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.config import settings
 from app.utils.cache_paths import cache_file
+from app.utils.llm_json import parse_llm_json
 
 logger = logging.getLogger(__name__)
 
@@ -188,11 +189,11 @@ def _call_gpt4o(hcp: Dict) -> Tuple[str, Optional[str]]:
             max_tokens=220,
             temperature=0.3,
         )
-        data = json.loads(resp.choices[0].message.content)
+        data = parse_llm_json(resp.choices[0].message.content)
         insight   = str(data.get("insight", ""))
         highlight = data.get("highlight")
     except Exception as exc:
-        logger.warning("Ollama insight failed for %s: %s", hcp["hcp_id"], exc)
+        logger.warning("LLM insight failed for %s: %s", hcp["hcp_id"], exc)
         insight, highlight = _rule_based_insight(hcp)
 
     _INSIGHT_CACHE[cache_key] = {"insight": insight, "highlight": highlight}
@@ -265,7 +266,7 @@ def warm_insights(hcps: List[Dict]) -> int:
                 _save_insight_cache()   # survive a mid-warm restart
                 logger.info("Insight warm progress: %d/%d", done, len(pending))
     _save_insight_cache()
-    logger.info("Warmed %d Ollama insights.", len(pending))
+    logger.info("Warmed %d LLM insights.", len(pending))
     return len(pending)
 
 

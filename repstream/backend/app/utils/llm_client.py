@@ -1,7 +1,7 @@
 """Dynamic LLM client — switch providers from .env.
 
 One knob controls the whole app's LLM:
-    LLM_PROVIDER = ollama | openai | groq
+    LLM_PROVIDER = ollama | openai | groq | openvino
     LLM_MODEL    = model name for that provider
 
 `make_llm_client()` returns a small OpenAI-style shim so every caller can keep
@@ -16,6 +16,8 @@ new provider by adding one branch in `_build_chat_model()`.
 
 Provider packages are imported lazily, so you only need the one you use:
     ollama → langchain-ollama   openai → langchain-openai   groq → langchain-groq
+    openvino → langchain-openai (the model server is OpenAI-compatible; there is
+               no openvino package to install — it is a remote HTTP endpoint)
 """
 import logging
 from typing import List, Optional
@@ -25,6 +27,37 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+# OpenVINO Model Server serves chat completions under /v3. A base URL without any
+# version path is always wrong, and the way it fails is expensive: the OpenAI
+# client posts to <host>/chat/completions, OVMS answers 400 "Invalid request URL",
+# and because every enrichment site retries LLM_MAX_RETRIES times, one bad URL
+# turns a warm-up into hundreds of failed calls that still take minutes and leave
+# every AI field empty. Appending the documented path is far better than letting
+# that happen silently — and it is logged, so a server on a different prefix is
+# visible rather than mysterious.
+_OVMS_DEFAULT_PATH = "/v3"
+
+
+def _openvino_base_url() -> str:
+    raw = (settings.OPENVINO_BASE_URL or "").strip().rstrip("/")
+    if not raw:
+        raise ValueError(
+            "OPENVINO_ENABLED is true but OPENVINO_BASE_URL is empty. Point it at "
+            "the model server's OpenAI-compatible endpoint, e.g. "
+            "http://<host>:8000/v3"
+        )
+    # Everything after scheme://host[:port]. "" means no path was given at all.
+    without_scheme = raw.split("://", 1)[-1]
+    if "/" not in without_scheme:
+        logger.warning(
+            "OPENVINO_BASE_URL=%s has no version path; using %s%s. Set the full "
+            "path explicitly if your server uses a different prefix.",
+            raw, raw, _OVMS_DEFAULT_PATH,
+        )
+        return raw + _OVMS_DEFAULT_PATH
+    return raw
 
 
 # ── Provider factory ──────────────────────────────────────────────────────────
@@ -76,7 +109,35 @@ def _build_chat_model(temperature: Optional[float], max_tokens: Optional[int], j
             kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
         return ChatGroq(**kwargs)
 
-    raise ValueError(f"Unknown LLM_PROVIDER '{provider}' — use one of: ollama, openai, groq")
+    if provider == "openvino":
+        # OpenVINO Model Server speaks the OpenAI chat-completions protocol, so
+        # the OpenAI client talks to it unchanged — only the base URL differs.
+        # Nothing OpenVINO-specific is installed or imported here: this is an HTTP
+        # call to a server someone else runs, exactly like groq.
+        from langchain_openai import ChatOpenAI
+
+        base_url = _openvino_base_url()
+        kwargs = {
+            "model": model,
+            # OVMS accepts any token when it is not configured for auth, but the
+            # OpenAI client refuses to construct without one — so send a
+            # placeholder rather than failing before the request is even made.
+            "api_key": settings.OPENVINO_API_KEY or "not-required",
+            "base_url": base_url,
+            "timeout": settings.LLM_TIMEOUT,
+            "max_retries": settings.LLM_MAX_RETRIES,
+        }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        if json_mode:
+            kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
+        return ChatOpenAI(**kwargs)
+
+    raise ValueError(
+        f"Unknown LLM_PROVIDER '{provider}' — use one of: ollama, openai, groq, openvino"
+    )
 
 
 # ── OpenAI-style response shim ────────────────────────────────────────────────

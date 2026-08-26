@@ -272,6 +272,35 @@ def warm_all_territory_candidates(db: Session, max_workers: int = 3) -> None:
                 time.time() - start, len(_CANDIDATE_CACHE))
 
 
+def candidates_for_selection(
+    db: Session, rep: RepIdentity, sel: FilterSelection
+) -> List[dict]:
+    """Candidate rows for a filter selection, as plain dicts.
+
+    Split out of the route below so the Territory Prioritization summary can
+    count the very same rows for its New Writer KPI tiles. Both callers going
+    through one function is what keeps the tile and the module's own screen from
+    disagreeing after someone edits the scoping rule.
+    """
+    if sel.is_empty():
+        return _get_candidates(db, rep.territory_id)
+
+    sf = salesforce_of(rep.territory_id)
+    territories = resolve_territories(db, sf, sel) or []
+    bare_terrs = sorted({t.split("|")[-1] for t in territories})
+
+    # Read ONLY from the warmed JSON cache — never regenerate at request time.
+    merged: dict[str, dict] = {}
+    with _candidate_io_lock:
+        for terr in bare_terrs:
+            for c in _CANDIDATE_CACHE.get(terr, []):
+                merged[c["hcp_id"]] = c
+    # Re-cap to the top 10 by competitor Rx volume across the whole selection —
+    # same "highest-value targets first" intent as a single territory, whether the
+    # scope is one territory or a manager's 8.
+    return sorted(merged.values(), key=lambda c: -(c.get("in_class_rx_q1") or 0))[:10]
+
+
 @router.get("/candidates", response_model=List[NewWriterCandidate])
 async def get_new_writer_candidates(
     sel: FilterSelection = Depends(filter_params),
@@ -282,25 +311,7 @@ async def get_new_writer_candidates(
 
     Pass manager_id/employee_id/territory_id to scope candidates to that
     territory's real HCP population; unfiltered returns the default KPI-7 list."""
-    if not sel.is_empty():
-        sf = salesforce_of(rep.territory_id)
-        territories = resolve_territories(db, sf, sel) or []
-        bare_terrs = sorted({t.split("|")[-1] for t in territories})
-
-        # Read ONLY from the warmed JSON cache — never regenerate at request time.
-        merged: dict[str, dict] = {}
-        with _candidate_io_lock:
-            for terr in bare_terrs:
-                for c in _CANDIDATE_CACHE.get(terr, []):
-                    merged[c["hcp_id"]] = c
-        # Re-cap to the top 10 by competitor Rx volume across the whole
-        # selection — same "highest-value targets first" intent as a single
-        # territory, whether the scope is one territory or a manager's 8.
-        candidates = sorted(merged.values(), key=lambda c: -(c.get("in_class_rx_q1") or 0))[:10]
-    else:
-        candidates = _get_candidates(db, rep.territory_id)
-
-    return [NewWriterCandidate(**c) for c in candidates]
+    return [NewWriterCandidate(**c) for c in candidates_for_selection(db, rep, sel)]
 
 
 @router.post("/{hcp_id}/approach-brief", response_model=ApproachBriefResponse)

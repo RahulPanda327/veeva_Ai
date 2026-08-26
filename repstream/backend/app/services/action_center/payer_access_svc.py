@@ -22,6 +22,7 @@ from app.models.payer_access import PayerAccess
 from app.schemas.action_center import PayerAccessItem, PayerAccessResponse, priority_counts_from
 from app.utils.db_retry import run_with_retry
 from app.utils.llm_client import normalize_str_list
+from app.utils.llm_json import parse_llm_json
 
 log = logging.getLogger(__name__)
 
@@ -316,12 +317,12 @@ def _call_gpt4o(row: PayerAccess) -> Dict[str, str]:
             response_format={"type": "json_object"},
             messages=[{"role": "user", "content": prompt}],
         )
-        result = json.loads(resp.choices[0].message.content)
+        result = parse_llm_json(resp.choices[0].message.content)
         result["ai_action_plan"] = normalize_str_list(result.get("ai_action_plan"))
         _CACHE[cache_key] = result
         return result
     except Exception as exc:
-        log.warning("Ollama error for %s: %s", row.plan_id, exc)
+        log.warning("LLM error for %s: %s", row.plan_id, exc)
         result = _stub_gpt(row)
         _CACHE[cache_key] = result
         return result
