@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.routers import assistant, objection_handler, new_writer_id, territory_prioritization, action_center
 from app.utils.masking import BrandMaskingMiddleware
+from app.utils.model_banner import log_stage
 from app.utils.response_cache import DailyResponseCacheMiddleware, clear_all as clear_all_cached_responses
 
 RESOURCES_DIR = Path(__file__).resolve().parent / "resources"
@@ -65,6 +66,12 @@ def _refresh_endpoint_cache_background(skip_assistant_kb: bool = True) -> None:
     would always call back to a hardcoded localhost:8000, which silently
     does nothing whenever the server is actually started on a different
     port (e.g. `uvicorn main:app --port 8006`)."""
+    # Named here as well as at startup: this is the point where real model calls
+    # begin, and a warm-up log is what someone reads when the AI fields come back
+    # empty. Include the embedding line only when the KB is actually re-embedded.
+    log_stage("Warm-up", embedding=not skip_assistant_kb,
+              store=not skip_assistant_kb, log=logger)
+
     cleared = clear_all_cached_responses()
     logger.info("Startup: cleared %d in-memory response cache entries.", cleared)
 
@@ -141,6 +148,7 @@ def _embed_only() -> None:
     last warm-up rather than this instant.
     """
     logger.info("Startup: --embedding only (no warm-up).")
+    log_stage("Embedding", embedding=True, store=True, log=logger)
     try:
         from scripts.warm_cache import refresh_assistant_kb   # noqa: PLC0415
 
@@ -164,23 +172,17 @@ def _startup_tasks() -> None:
 
 
 def _log_llm_banner() -> None:
-    """State the active LLM platform, model and endpoint at startup.
+    """State the active LLM and embedding models at startup.
 
-    Worth a line of its own because every enrichment failure downstream is
-    reported per-item ("... unavailable for AL-002"), which says nothing about
-    WHICH provider was being called. A wrong provider or a wrong base URL used to
-    be visible only as hundreds of identical item-level warnings.
+    Worth its own lines because every failure downstream is reported per-item
+    ("... unavailable for AL-002"), which says nothing about WHICH model was
+    being called. A wrong provider or base URL used to be visible only as
+    hundreds of identical item-level warnings.
+
+    The embedding model is resolved lazily by log_stage, so a process that only
+    serves cached responses still does not pay for loading it here.
     """
-    provider = settings.LLM_PROVIDER
-    endpoint = {
-        "ollama":   settings.OLLAMA_BASE_URL,
-        "openai":   settings.OPENAI_BASE_URL or "https://api.openai.com/v1",
-        "groq":     "https://api.groq.com/openai/v1",
-        "openvino": settings.OPENVINO_BASE_URL,
-    }.get(provider, "")
-    logger.info("LLM platform: %s | model: %s | endpoint: %s%s",
-                provider.upper(), settings.LLM_MODEL, endpoint or "(default)",
-                "  [STUB MODE - no real calls]" if settings.LLM_STUB_MODE else "")
+    log_stage("Startup", embedding=True, store=True, log=logger)
 
 
 @asynccontextmanager

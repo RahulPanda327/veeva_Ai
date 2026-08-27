@@ -18,9 +18,9 @@
       "yo"
     ],
     "responses": [
-      "Hello, {user_name}! \ud83d\udc4b Welcome to the Hub Data Assistant. How can I help you today?",
+      "Hello, {user_name}! \ud83d\udc4b Welcome to the DATAstream Assistant. How can I help you today?",
       "Hi {user_name}! Great to see you. What data would you like to check today?",
-      "Hey {user_name}! I'm your Hub Data Assistant. Ask me anything about file loads, schedules, or feed status.",
+      "Hey {user_name}! I'm your DATAstream Assistant. Ask me anything about file loads, schedules, or feed status.",
       "Hello {user_name}! Ready to help. You can ask me about failed files, QC issues, feed details, and more.",
       "Hi there, {user_name}! What can I look up for you today?"
     ],
@@ -301,7 +301,7 @@
       "Sure, {user_name}! Here's what I can help you with:\n\ud83d\udcc5 Schedules \u2014 today, tomorrow, yesterday\n\u26a0\ufe0f Issues \u2014 failed, missed, delayed files\n\ud83d\udd0d Feed lookup \u2014 copay, walgreens, copilot, integrichain\n\ud83d\udcca History \u2014 last 7 days, accredo loads\n\u2705 QC \u2014 quality check failures\n\nJust ask in plain English!",
       "Happy to help, {user_name}! You can ask me things like:\n\u2022 'Which files failed today?'\n\u2022 'Show Walgreens feed status'\n\u2022 'Any QC issues in the last 3 days?'\n\u2022 'What loaded yesterday?'\n\nWhat would you like to check?",
       "Here's what I can do, {user_name}:\n\u2714 Check file load schedules\n\u2714 Find failed, missed, or delayed jobs\n\u2714 Look up feeds by vendor name\n\u2714 Show load history\n\u2714 Report QC failures\n\nWhat do you need?",
-      "I'm your Hub Data Assistant, {user_name}! Ask me about file loads, feed status, QC issues, or schedules. Try: 'Which files are scheduled today?'",
+      "I'm your DATAstream Assistant, {user_name}! Ask me about file loads, feed status, QC issues, or schedules. Try: 'Which files are scheduled today?'",
       "Of course, {user_name}! I can pull data on file schedules, load statuses, QC failures, and vendor feeds. Just ask me a question in plain English."
     ],
     "show_examples": true,
@@ -478,10 +478,10 @@
       "introduce yourself"
     ],
     "responses": [
-      "Hi {user_name}! I'm the Hub Data Assistant \ud83e\udd16 \u2014 built to help you check file loads, feed status, QC issues, and schedules. Just ask me in plain English!",
-      "I'm your Hub Data Assistant, {user_name}! I connect to Hub's metadata to answer questions about file loads, failed jobs, QC failures, and vendor feeds.",
+      "Hi {user_name}! I'm the DATAstream Assistant \ud83e\udd16 \u2014 built to help you check file loads, feed status, QC issues, and schedules. Just ask me in plain English!",
+      "I'm your DATAstream Assistant, {user_name}! I connect to Hub's metadata to answer questions about file loads, failed jobs, QC failures, and vendor feeds.",
       "Great question, {user_name}! I'm an AI chatbot built for Hub data operations. I can check schedules, find failures, look up vendor feeds, and report QC issues.",
-      "I'm the Hub Data Assistant, {user_name}! Think of me as your data ops helper \u2014 I can answer questions about file loads, feed status, and quality checks.",
+      "I'm the DATAstream Assistant, {user_name}! Think of me as your data ops helper \u2014 I can answer questions about file loads, feed status, and quality checks.",
       "Hello {user_name}! I'm an AI assistant built for Hub data operations. I help teams quickly check file schedules, load statuses, and QC results without writing SQL."
     ],
     "show_examples": true,

@@ -43,15 +43,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
-
+from db_qa.embedder import collection_suffix, get_embedder
 from utils.logging_util import setup_logging
 
 logger = setup_logging("chroma_store")
-
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
-EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIMENSION", "384"))
-
 
 def _env(name: str, default: str) -> str:
     """Environment value, treating blank as absent.
@@ -69,10 +64,26 @@ def _env(name: str, default: str) -> str:
 # checkout like the .npz store does.
 _DEFAULT_DIR = Path(__file__).resolve().parents[1] / "chroma_db"
 CHROMA_DIR = Path(_env("CHROMA_DIR", str(_DEFAULT_DIR)))
-COLLECTION_NAME = _env("CHROMA_COLLECTION", "repstream_kb")
+_BASE_COLLECTION = _env("CHROMA_COLLECTION", "repstream_kb")
 
-# Reported where PGVectorStore names its table, so logs read the same either way.
-TABLE_NAME = COLLECTION_NAME
+
+def _collection_name() -> str:
+    """Collection name for the ACTIVE embedding model.
+
+    The model is part of the name because vectors from different models are not
+    comparable and, here, are not even the same width (384 vs 768). Sharing one
+    collection would either raise a dimension error on insert or - if it did not -
+    silently return nonsense scores. Separate names mean switching the embedding
+    flag switches stores cleanly; the other one is left intact to switch back to.
+    """
+    return f"{_BASE_COLLECTION}_{collection_suffix()}"
+
+# Resolved lazily: naming the collection means asking which embedding model is
+# active, and that must not happen at import time in a process that never
+# embeds anything.
+def _table_name() -> str:
+    return _collection_name()
+
 
 # One upsert per chunk is a separate SQLite transaction and index insert. Batching
 # turns a 298-chunk ingest into a handful of calls instead of 298.
@@ -83,7 +94,6 @@ class ChromaStore:
     """HNSW search over a local Chroma collection."""
 
     def __init__(self) -> None:
-        self._model = None
         self._client = None
         self._collection = None
         self._defer = 0
@@ -91,36 +101,16 @@ class ChromaStore:
 
     # ── Model ────────────────────────────────────────────────────────────────
 
-    def _get_model(self):
-        """Load the encoder on first use.
-
-        Deferred because importing sentence-transformers pulls in torch: seconds
-        of startup and hundreds of MB of RSS that a process which never searches
-        should not pay.
-        """
-        if self._model is None:
-            from sentence_transformers import SentenceTransformer   # noqa: PLC0415
-
-            logger.info({"event": "chroma_loading_model", "model": EMBEDDING_MODEL})
-            self._model = SentenceTransformer(EMBEDDING_MODEL)
-            actual = self._model.get_sentence_embedding_dimension()
-            if actual != EMBEDDING_DIM:
-                raise ValueError(
-                    f"EMBEDDING_DIMENSION={EMBEDDING_DIM} but {EMBEDDING_MODEL} produces "
-                    f"{actual}. Fix the setting, or re-ingest with a matching model - "
-                    f"vectors of different widths cannot be compared."
-                )
-        return self._model
-
     def _encode(self, text: str) -> list[float]:
-        vec = self._get_model().encode(text, show_progress_bar=False)
-        vec = np.asarray(vec, dtype=np.float32)
-        # Normalised here so cosine distance behaves identically to the .npz
-        # backend. Guard the zero vector: an empty string would divide by zero.
-        norm = float(np.linalg.norm(vec))
-        if norm > 0:
-            vec = vec / norm
-        return vec.tolist()
+        """Embed via whichever backend the EMBEDDING_*_ENABLED flags select.
+
+        The store deliberately does not own this. Chroma would happily embed
+        documents itself with its bundled ONNX model, and this class used to load
+        sentence-transformers directly — either way the choice of model would stop
+        being the .env setting it is supposed to be, and switching backends would
+        quietly change the answers rather than just where they are stored.
+        """
+        return get_embedder().encode(text)
 
     # ── Connection ───────────────────────────────────────────────────────────
 
@@ -132,8 +122,11 @@ class ChromaStore:
         from chromadb.config import Settings              # noqa: PLC0415
 
         CHROMA_DIR.mkdir(parents=True, exist_ok=True)
+        name = _collection_name()
+        emb = get_embedder()
         logger.info({"event": "chroma_open", "path": str(CHROMA_DIR),
-                     "collection": COLLECTION_NAME})
+                     "collection": name, "embedder": emb.backend,
+                     "embed_model": emb.model, "dim": emb.dim})
         self._client = chromadb.PersistentClient(
             path=str(CHROMA_DIR),
             # Telemetry is an outbound HTTP call on startup. Off: it is noise in
@@ -141,7 +134,7 @@ class ChromaStore:
             settings=Settings(anonymized_telemetry=False, allow_reset=True),
         )
         self._collection = self._client.get_or_create_collection(
-            name=COLLECTION_NAME,
+            name=name,
             # Default is L2. Cosine is what every other backend and the
             # COSINE_SIMILARITY_THRESHOLD setting assume, and it is only settable
             # at creation time - a collection made without this keeps L2 for good.

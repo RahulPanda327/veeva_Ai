@@ -498,7 +498,16 @@ def _print_summary(store) -> None:
 def main() -> None:
     store = get_vector_store()
 
-    print(f"Preparing vector store: {store_label()} ...")
+    # This runs as its own process (spawned by warm_cache.py), so it cannot rely
+    # on the server's startup banner - and this is the one place where the
+    # embedding model choice actually decides what ends up on disk.
+    from db_qa.embedder import get_embedder   # noqa: PLC0415
+
+    emb = get_embedder()
+    print("=" * 62)
+    print(f"EMBEDDING MODEL : {emb.backend.upper()} / {emb.model} ({emb.dim}-dim)")
+    print(f"VECTOR STORE    : {store_label()}")
+    print("=" * 62)
     store.ensure_table()
 
     # The local store persists on every store() unless told otherwise. Batching

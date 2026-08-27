@@ -56,6 +56,11 @@ def store_label() -> str:
         from db_qa.pgvector_store import TABLE_NAME   # noqa: PLC0415
 
         return f"postgres table '{TABLE_NAME}'"
-    from db_qa.chroma_store import CHROMA_DIR, COLLECTION_NAME   # noqa: PLC0415
+    from db_qa.chroma_store import CHROMA_DIR, _collection_name   # noqa: PLC0415
+    from db_qa.embedder import get_embedder                        # noqa: PLC0415
 
-    return f"chroma collection '{COLLECTION_NAME}' in {CHROMA_DIR}"
+    emb = get_embedder()
+    # The embedding model is named too: the collection is per-model, so "which
+    # collection" is only half an answer to "where do the vectors live".
+    return (f"chroma collection '{_collection_name()}' in {CHROMA_DIR} "
+            f"[{emb.backend}:{emb.model}, {emb.dim}-dim]")

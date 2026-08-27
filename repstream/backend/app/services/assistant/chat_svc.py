@@ -204,6 +204,16 @@ def chat(question: str, top_k: int = 6, min_score: float = 0.15) -> Dict[str, An
         return _result(greeting, started=started, answer_type="greeting",
                        matched_template="Greeting", source="kb_greetings")
 
+    # Logged per question, not once at startup: the retrieval model and the
+    # answering model are configured independently, and when an answer looks
+    # wrong the first thing worth knowing is which pair produced it.
+    try:
+        from app.utils.model_banner import embedding_line, llm_line   # noqa: PLC0415
+
+        log.info("Chat: embedding=%s | llm=%s", embedding_line(), llm_line())
+    except Exception:  # noqa: BLE001
+        pass
+
     try:
         hits: List[dict] = _store().search(question, top_k=top_k, min_score=min_score)
     except Exception as exc:  # noqa: BLE001

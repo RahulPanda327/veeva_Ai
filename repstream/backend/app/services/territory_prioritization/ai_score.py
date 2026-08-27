@@ -73,6 +73,13 @@ def compute_ai_priority_score(trx_growth_pct: float, interaction_impact: float, 
     }
 
 
+# Display label shown as `segment`, keyed by ai_priority_tier. The warehouse's
+# own Segment_Description ("Target A", "Non-Target", ...) is deliberately
+# replaced: the list is ordered by AI tier, and a row reading HIGH beside
+# "Non-Target" reads as a contradiction to anyone scanning it.
+_TIER_SEGMENT = {"HIGH": "High", "MEDIUM": "Medium", "LOW": "Low"}
+
+
 def assign_ai_priority_tier(score: float) -> str:
     if score >= TIER_HIGH:
         return "HIGH"
@@ -272,6 +279,15 @@ def enrich_hcp_with_ai_scores(hcp: Dict, call_stats: Dict) -> Dict:
     )
     hcp["ai_engagement_category"] = cat
     hcp["ai_engagement_urgency"]  = urgency
+
+    # segment now mirrors the AI tier: HIGH -> "High", MEDIUM -> "Medium",
+    # LOW -> "Low".
+    #
+    # Set HERE, at the very end, and not earlier: classify_engagement() above
+    # reads hcp["segment"] and treats the warehouse values ("Target A",
+    # "Non-Target", ...) as a signal. Overwriting before that call would feed it
+    # the tier it helped produce and quietly change every engagement category.
+    hcp["segment"] = _TIER_SEGMENT.get(hcp["ai_priority_tier"], "Low")
 
     return hcp
 

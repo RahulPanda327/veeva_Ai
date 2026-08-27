@@ -172,6 +172,12 @@ def warm_response_cache(base_url: str) -> None:
     # (up to ~15 rows) can take several minutes — far beyond the old 120s. Give the
     # background warm a generous per-request timeout so those endpoints finish and
     # populate the in-process caches (after which real requests are instant).
+    # Separate process from the server, so its startup banner is not in this
+    # log. Named again here because the enrichment these calls trigger is where
+    # the LLM actually runs.
+    from app.utils.model_banner import log_stage   # noqa: PLC0415
+    log_stage("Warm-up/response-cache", log=log)
+
     log.info("Warming response cache via live server at %s ...", base_url)
     with httpx.Client(base_url=base_url, timeout=900) as client:
         # 1) Unfiltered baseline FIRST — restores the ~3-min 'app ready' timing.
@@ -219,11 +225,15 @@ def refresh_assistant_kb(skip_embedding: bool = False,
       2. ingest_to_pgvector — re-embeds the kb folder, so the assistant answers
          from the new numbers rather than the previous snapshot.
 
-    Step 2 needs Postgres up. If it is not, the export still stands and the
-    assistant keeps serving its previous embeddings, so a failure here degrades
-    rather than breaks.
+    Step 2 needs the configured vector store reachable. If it is not, the export
+    still stands and the assistant keeps serving its previous embeddings, so a
+    failure here degrades rather than breaks.
     """
     import subprocess   # noqa: PLC0415
+
+    from app.utils.model_banner import log_stage   # noqa: PLC0415
+    log_stage("Warm-up/knowledge-base", embedding=not skip_embedding,
+              store=not skip_embedding, log=log)
 
     backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     assistant_dir = os.path.join(backend_dir, "ai_assistant")
