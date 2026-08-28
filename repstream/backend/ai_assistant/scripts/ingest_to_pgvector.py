@@ -495,6 +495,37 @@ def _print_summary(store) -> None:
     print("=" * 62)
 
 
+def _write_ingest_stamp(store) -> None:
+    """Record that an ingest completed, with a fresh id.
+
+    The assistant's answer cache keys on this: an answer produced from the old
+    embeddings must stop being served once the knowledge base changes, or a
+    warm-up quietly leaves yesterday's numbers being quoted as current.
+
+    Written LAST, only on success, so a run that died halfway does not claim to
+    have refreshed anything. Deriving the fingerprint from the store's own files
+    instead does not work - Chroma rewrites chroma.sqlite3 just by opening it,
+    which invalidated the cache on every server start.
+    """
+    import uuid   # noqa: PLC0415
+    from datetime import datetime, timezone   # noqa: PLC0415
+
+    try:
+        from db_qa.chroma_store import CHROMA_DIR   # noqa: PLC0415
+
+        CHROMA_DIR.mkdir(parents=True, exist_ok=True)
+        path = CHROMA_DIR / "ingest_stamp.json"
+        path.write_text(json.dumps({
+            "ingest_id": str(uuid.uuid4()),
+            "at": datetime.now(timezone.utc).isoformat(),
+            "rows": store.count(),
+        }), encoding="utf-8")
+        print(f"Ingest stamp written: {path.name}")
+    except Exception as exc:  # noqa: BLE001
+        # A missing stamp costs cache reuse across restarts, nothing more.
+        print(f"  WARNING: could not write ingest stamp ({exc})")
+
+
 def main() -> None:
     store = get_vector_store()
 
@@ -521,6 +552,7 @@ def main() -> None:
     # landed. Reporting success before the flush is how a failed write ends up
     # looking like a completed ingest.
     _print_summary(store)
+    _write_ingest_stamp(store)
 
 
 def _ingest_all(store) -> int:

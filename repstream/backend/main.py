@@ -247,7 +247,15 @@ async def clear_response_cache():
     immediately, no restart needed.
     """
     cleared = clear_all_cached_responses()
-    return {"cleared": cleared}
+
+    # The assistant's answer cache is cleared here too. A small model
+    # occasionally returns a malformed answer, and without this that one bad
+    # generation is served for the whole TTL - the only recovery being a file
+    # deletion, which is not something to ask of whoever notices it.
+    from app.services.assistant import response_cache   # noqa: PLC0415
+
+    assistant_cleared = response_cache.clear()
+    return {"cleared": cleared, "assistant_answers_cleared": assistant_cleared}
 
 
 # ── Launcher ─────────────────────────────────────────────────────────────────

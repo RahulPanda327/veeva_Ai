@@ -168,6 +168,44 @@ class Settings(BaseSettings):
     # send that header, so trusting it otherwise defeats the IP ceiling.
     ASSISTANT_TRUST_PROXY_HEADERS: bool = False
 
+    # ── Assistant conversation memory ─────────────────────────────────────────
+    # Memory is keyed on the caller's app_session_id (echoed back as
+    # chat_session_id). A client that does not send one gets a fresh uuid per
+    # request and therefore no memory at all - that is the usual reason memory
+    # "does not work" after wiring it up.
+    ASSISTANT_MEMORY_ENABLED: bool = True
+    # Turns (question+answer pairs), not messages, shown to the model.
+    ASSISTANT_MEMORY_WINDOW_TURNS: int = 5
+    # Idle expiry. A session untouched for this long is started fresh rather than
+    # resumed: stale turns read to the model as current and produce odd answers.
+    ASSISTANT_SESSION_TTL_HOURS: int = 24
+    # Hard ceiling on stored sessions, oldest-touched evicted first. Without it
+    # an endpoint anyone on the network can hit grows a file forever.
+    ASSISTANT_MAX_SESSIONS: int = 500
+    # Where sessions live.
+    #   file      backend/cache/assistant_sessions.json - no server needed
+    #   postgres  table assistant_sessions, via POSTGRES_URL - shared across
+    #             processes and machines, which the file store cannot be
+    ASSISTANT_SESSION_STORE: str = "file"
+    # Only read when ASSISTANT_SESSION_STORE=postgres. Special characters must be
+    # percent-encoded because this is a URL: %40 is "@".
+    POSTGRES_URL: str = "postgresql://postgres:postgres@localhost:5432/postgres"
+    # Resolve follow-ups ("what about Pittsburgh?") into standalone questions
+    # before retrieval. Costs one extra LLM call per question with history, and
+    # without it memory makes retrieval WORSE, not better.
+    ASSISTANT_QUERY_REWRITE_ENABLED: bool = True
+
+    # ── Assistant answer cache ────────────────────────────────────────────────
+    # Repeating a question re-runs an embedding call, a vector search and a
+    # generation - 20-30s on a small local model. Cached answers are keyed on the
+    # question AND the models AND a knowledge-base fingerprint, so a re-embed
+    # retires the old entries instead of serving yesterday's numbers as current.
+    ASSISTANT_RESPONSE_CACHE_ENABLED: bool = True
+    # 24h. The KB fingerprint already retires entries on re-ingest; this is the
+    # backstop for a deployment that never re-embeds.
+    ASSISTANT_RESPONSE_CACHE_TTL_SECONDS: int = 86400
+    ASSISTANT_RESPONSE_CACHE_MAX_ENTRIES: int = 500
+
     # Dev flags
     DEV_SKIP_AUTH: bool = False
     LLM_STUB_MODE: bool = False

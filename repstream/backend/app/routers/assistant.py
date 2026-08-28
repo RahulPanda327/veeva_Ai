@@ -17,7 +17,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, Field
 
-from app.services.assistant import rate_limit
+from app.services.assistant import interaction_store, memory, rate_limit
 from app.services.assistant.chat_svc import chat
 
 logger = logging.getLogger(__name__)
@@ -127,7 +127,11 @@ async def ai_assistant_chat(body: ChatRequestBody, request: Request, response: R
 
     # Echo the caller's session id when supplied so a client can keep its own
     # thread; otherwise mint one for this exchange.
-    session_id = req.app_session_id or str(uuid.uuid4())
+    #
+    # This id is now what conversation memory is keyed on. A client that never
+    # sends app_session_id gets a fresh uuid every request and therefore no
+    # memory - it must send back the chat_session_id it received.
+    session_id = memory.get_or_create_session_id(req.app_session_id)
 
     # Quota is checked BEFORE the model runs, so a blocked request costs nothing.
     decision = rate_limit.check(request)
@@ -150,7 +154,11 @@ async def ai_assistant_chat(body: ChatRequestBody, request: Request, response: R
             ),
         )
 
-    result = chat(question)
+    # session_id keys the conversation memory; device_id is recorded on the
+    # session so a stored conversation can be tied back to a browser without a
+    # login. Both are already resolved above - nothing new is asked of the client
+    # beyond sending back the chat_session_id it was given.
+    result = chat(question, session_id=session_id, device_id=decision.device_id)
 
     # Count only questions that were actually answered: a blocked or empty one
     # must not consume quota, or a retry loop would extend its own lockout.
@@ -195,13 +203,20 @@ async def ai_assistant_chat(body: ChatRequestBody, request: Request, response: R
 def _envelope(req: ChatRequestPayload, question: str, session_id: str, now: str, *,
               success: bool, answer: str, status: BotStatusItem,
               details: ProcessingDetails) -> StandardApiResponse:
-    """Build the response. One builder for every outcome — answered, empty and
-    rate-limited — so a new branch cannot drift from the agreed envelope."""
-    return StandardApiResponse(
+    """Build the response, and persist it as one chat_interactions row.
+
+    The stored row IS this envelope - same fields, same JSONB blocks - so there
+    is no second mapping to keep in step with the API. Persisting here rather
+    than at each return site means every outcome is recorded, including the
+    rate-limited and empty-question ones that never reach the model.
+    """
+    envelope = StandardApiResponse(
         success=success,
         response=ResponseBody(
             message_id=str(uuid.uuid4()),
-            message_index=1,
+            # Real position in the thread, read from the table: an in-memory
+            # counter would restart at 0 in every process serving the session.
+            message_index=interaction_store.next_message_index(session_id),
             chat_session_id=session_id,
             app_session_id=req.app_session_id,
             tenant_id=req.tenant_id,
@@ -219,3 +234,12 @@ def _envelope(req: ChatRequestPayload, question: str, session_id: str, now: str,
             feedback=Feedback(),
         ),
     )
+
+    # request_source is carried onto the row but is not part of the response
+    # body, so it is added to the dict rather than to ResponseBody - changing the
+    # response shape is not something a storage concern gets to do.
+    row = envelope.response.model_dump()
+    row["request_source"] = req.request_source
+    interaction_store.record(row)
+
+    return envelope
